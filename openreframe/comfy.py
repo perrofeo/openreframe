@@ -14,8 +14,11 @@ from . import __version__
 WORKFLOWS = Path(__file__).parent / "workflows"
 
 
-def client() -> Comfy:
-    # Reads COMFY_API_KEY and COMFY_BASE_URL from the environment. The key never touches disk here.
+def client(api_key: str | None = None) -> Comfy:
+    """COMFY_BASE_URL picks the target. The key comes from the caller (the web app passes each visitor's
+    own) or from COMFY_API_KEY; it is never written anywhere by openreframe."""
+    if api_key:
+        return Comfy(api_key=api_key, client_info=f"openreframe/{__version__}")
     return Comfy(client_info=f"openreframe/{__version__}")
 
 

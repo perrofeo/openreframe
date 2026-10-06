@@ -21,7 +21,8 @@ def log(msg: str) -> None:
 
 
 class Run:
-    def __init__(self, source: Path, out_dir: Path, size=(544, 960), seed=6061003, ratios=("9:16", "4:5", "1:1")):
+    def __init__(self, source: Path, out_dir: Path, size=(544, 960), seed=6061003, ratios=("9:16", "4:5", "1:1"),
+                 api_key: str | None = None, logger=None, captioner: str | None = None):
         self.source = source.resolve()
         self.out = out_dir.resolve()
         self.work = self.out / "work"
@@ -34,12 +35,16 @@ class Run:
         self.state.setdefault("done", [])
         self.ratios = ratios
         self._client = None
+        self._api_key = api_key
+        self._log = logger or log
+        if captioner:
+            self.state["captioner"] = captioner
 
     # -- bookkeeping ---------------------------------------------------------------------------
     @property
     def c(self):
         if self._client is None:
-            self._client = comfy.client()
+            self._client = comfy.client(self._api_key)
         return self._client
 
     def save(self):
@@ -65,9 +70,9 @@ class Run:
     def run(self, steps=STEPS):
         for step in steps:
             if step in self.state["done"]:
-                log(f"[{step}] done before, skipping")
+                self._log(f"[{step}] done before, skipping")
                 continue
-            log(f"[{step}]")
+            self._log(f"[{step}]")
             getattr(self, step)()
             self.state["done"].append(step)
             self.save()
@@ -78,7 +83,7 @@ class Run:
         self.state["probe"] = info
         shots = video.detect_cuts(self.source, info["fps"], info["frames"])
         self.state["shots"] = [{"start": a, "n": n} for a, n in shots]
-        log(f"  {info['width']}x{info['height']} @ {info['fps']:.3f} fps, {info['frames']} frames, {len(shots)} shots")
+        self._log(f"  {info['width']}x{info['height']} @ {info['fps']:.3f} fps, {info['frames']} frames, {len(shots)} shots")
         proxy = self.work / "proxy.mp4"
         scale = video.proxy(self.source, proxy)
         wf = comfy.build(self.c, comfy.template("detect.json"), {("load_video", "file"): proxy})
@@ -94,7 +99,7 @@ class Run:
                     for key in ("x", "y", "width", "height"):
                         b[key] *= scale
             (self.work / f"{name}.json").write_text(json.dumps(per_frame))
-        log(f"  boxes and faces for {info['frames']} frames")
+        self._log(f"  boxes and faces for {info['frames']} frames")
 
     # -- 2. framing (local) ---------------------------------------------------------------------
     def analyze(self):
@@ -113,7 +118,7 @@ class Run:
             d = self.shot_dir(k)
             video.write_mp4(crops, d / "crop.mp4", fps, crf=10)
             cv2.imwrite(str(d / "middle.png"), crops[n // 2])
-            log(f"  shot {k + 1:3d}: {n:4d} fr  crop {s['crop_w']}px ({s['crop_w'] / frames[0].shape[0]:.2f}:1)"
+            self._log(f"  shot {k + 1:3d}: {n:4d} fr  crop {s['crop_w']}px ({s['crop_w'] / frames[0].shape[0]:.2f}:1)"
                 f"  AI fills {1 - s['crop_h'] / out_h:.0%}  {'face' if s['has_face'] else 'subjects/motion'}")
 
     # -- 3. depth + caption per shot (Comfy, one job) ---------------------------------------------
@@ -142,13 +147,15 @@ class Run:
             p = f"s{k:03d}_"
             inputs[(p + "image", "image")] = self.shot_dir(k) / "middle.png"
             inputs[(p + "caption", "custom_prompt")] = fill.CAPTION_INSTRUCTION
+            if self.state.get("captioner"):
+                inputs[(p + "caption", "model_name")] = self.state["captioner"]
         job = self.c.run(comfy.build(self.c, graph, inputs))
         for k in todo:
             p, d = f"s{k:03d}_", self.shot_dir(k)
             comfy.download(job, p + "save_depth", d / "depth.png")
             comfy.download(job, p + "save_caption", d / "caption.txt")
             self.state["shots"][k]["caption"] = (d / "caption.txt").read_text(encoding="utf-8").strip()
-        log(f"  depth and caption for {len(todo)} shots")
+        self._log(f"  depth and caption for {len(todo)} shots")
 
     # -- 4. where to fill (local) ---------------------------------------------------------------
     def split(self):
@@ -160,7 +167,7 @@ class Run:
                                 s["face_y_max"]))
             note = self.state.get("notes", {}).get(str(k + 1), "")
             s["prompt"] = cap + (" " + note if note else "") + fill.PROMPT_TAIL
-            log(f"  shot {k + 1:3d}: fill {s['top']}px above, {s['bottom']}px below")
+            self._log(f"  shot {k + 1:3d}: fill {s['top']}px above, {s['bottom']}px below")
 
     # -- 5. outpaint every shot (Comfy, one job per shot) ----------------------------------------
     def fill(self):
@@ -188,7 +195,7 @@ class Run:
                 s["job_id"], s["job_key"] = self.c.submit(wf, idempotency_key=key).id, key
                 self.save()
             pending.append(k)
-        log(f"  {len(pending)} shots to render, {len(self.state['shots']) - len(pending)} reused")
+        self._log(f"  {len(pending)} shots to render, {len(self.state['shots']) - len(pending)} reused")
         for k in pending:
             s = self.state["shots"][k]
             job = self.c.jobs.get(s["job_id"])
@@ -197,7 +204,7 @@ class Run:
             comfy.download(job, "save", self.shot_dir(k) / "fill.mp4")
             s["fill_key"] = s["job_key"]
             self.save()
-            log(f"  shot {k + 1:3d} ready")
+            self._log(f"  shot {k + 1:3d} ready")
 
     # -- 6. paste back, join, audio, other ratios (local) ---------------------------------------------
     def assemble(self):
@@ -226,11 +233,11 @@ class Run:
             w.close()
             final = self.out / f"{name}_{r.replace(':', 'x')}.mp4"
             assemble.add_audio(w.path, self.source, final, self.state["probe"]["audio"])
-            log(f"  {final}")
+            self._log(f"  {final}")
         if "9:16" in self.ratios:
             cmp_ = self.out / f"{name}_compare.mp4"
             assemble.side_by_side(self.source, self.out / f"{name}_9x16.mp4", cmp_, out_h)
-            log(f"  {cmp_}")
+            self._log(f"  {cmp_}")
 
     # -- optional: the decisions drawn over the edit ----------------------------------------------
     def debug(self):
@@ -240,4 +247,4 @@ class Run:
                             json.loads((self.work / "boxes.json").read_text()), self.state["out"]["w"],
                             self.state["out"]["h"], self.state["probe"]["fps"], self.state["probe"]["audio"],
                             framing.SUBJECTS)
-        log(f"  {dest}")
+        self._log(f"  {dest}")

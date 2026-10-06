@@ -48,29 +48,35 @@ Options: `--ratios 9:16,4:5`, `--size 720x1280` (more detail, more GPU time), `-
 
 ## On your own ComfyUI
 
-The SDK talks to a local ComfyUI through [comfy-api-proxy](https://github.com/Comfy-Org/comfy-api-proxy):
+The SDK talks to a local ComfyUI through [comfy-api-proxy](https://github.com/Comfy-Org/comfy-api-proxy).
+Tested on a fresh install (ComfyUI 0.39, RTX 4060 Ti 8 GB): cuts, detection, depth and captions gave
+the same decisions on all 24 shots of our test edit as on Comfy Cloud.
 
 ```bash
-pip install comfy-api-proxy && comfy-api-proxy        # ComfyUI on :8188 -> API on :8189
-export COMFY_BASE_URL=http://127.0.0.1:8189
-openreframe my_edit.mp4
+pip install comfy-cli comfy-api-proxy
+comfy --workspace=./ComfyUI install --nvidia
+git clone https://github.com/1038lab/ComfyUI-QwenVL ComfyUI/custom_nodes/ComfyUI-QwenVL
+ComfyUI/.venv/bin/pip install -r ComfyUI/custom_nodes/ComfyUI-QwenVL/requirements.txt   # ComfyUI's own venv
+# models: see the table below
+ComfyUI/.venv/bin/python ComfyUI/main.py --port 8188 &
+comfy-api-proxy &                                     # ComfyUI on :8188 -> API on :8189
+export COMFY_BASE_URL=http://127.0.0.1:8189 COMFY_API_KEY=local
+openreframe my_edit.mp4 --captioner Qwen3-VL-2B-Instruct
 ```
 
-Your ComfyUI needs a recent core (RT-DETR, MediaPipe face, Depth Anything 3 and Wan VACE nodes), the
-[ComfyUI-QwenVL](https://github.com/1038lab/ComfyUI-QwenVL) node pack, and these models:
+| Model | File | Folder | Source |
+|---|---|---|---|
+| RT-DETR v4 | `rt_detr_v4-x-hgnet_fp16.safetensors` | `diffusion_models` | [Comfy-Org/RT-DETR](https://huggingface.co/Comfy-Org/RT-DETR) |
+| MediaPipe face | `mediapipe_face_fp32.safetensors` | `detection` | [Comfy-Org/mediapipe](https://huggingface.co/Comfy-Org/mediapipe) |
+| Depth Anything 3 Small | `depth_anything_3_small.safetensors` | `geometry_estimation` | [Comfy-Org/Depth-Anything-3](https://huggingface.co/Comfy-Org/Depth-Anything-3) |
+| Qwen3-VL 2B / 4B Instruct | downloaded by the node on first run | `LLM/Qwen-VL` | Qwen |
+| Wan 2.1 VACE 14B | `wan2.1_vace_14B_fp16.safetensors` | `diffusion_models` | [Comfy-Org/Wan_2.1_ComfyUI_repackaged](https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged) |
+| UMT5-XXL | `umt5_xxl_fp16.safetensors` | `text_encoders` | same |
+| Wan 2.1 VAE | `wan_2.1_vae.safetensors` | `vae` | same |
+| lightx2v step distill | `lightx2v_T2V_14B_cfg_step_distill_v2_lora_rank64_bf16.safetensors` | `loras` | lightx2v |
 
-| Model | File | Folder |
-|---|---|---|
-| Wan 2.1 VACE 14B | `wan2.1_vace_14B_fp16.safetensors` | `diffusion_models` |
-| UMT5-XXL | `umt5_xxl_fp16.safetensors` | `text_encoders` |
-| Wan 2.1 VAE | `wan_2.1_vae.safetensors` | `vae` |
-| lightx2v step distill | `lightx2v_T2V_14B_cfg_step_distill_v2_lora_rank64_bf16.safetensors` | `loras` |
-| RT-DETR v4 | `rt_detr_v4-x-hgnet_fp16.safetensors` | `diffusion_models` |
-| MediaPipe face | `mediapipe_face_fp32.safetensors` | `detection` |
-| Depth Anything 3 Small | `depth_anything_3_small.safetensors` | `depthanything3` |
-| Qwen3-VL 4B Instruct | downloaded by the node | `LLM/Qwen-VL` |
-
-The 14B video model wants a large GPU; that is what the Cloud path is for.
+The analysis runs on an 8 GB card with the 2B captioner. The 14B fill model needs a large GPU (we use
+Comfy Cloud for that step); on a small one, swap in a lighter fill workflow (next section).
 
 ## Swap the model
 

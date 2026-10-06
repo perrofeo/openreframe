@@ -18,6 +18,8 @@ def main(argv=None):
     ap.add_argument("--steps", default=",".join(STEPS), help=f"run only some steps: {','.join(STEPS)}")
     ap.add_argument("--redo", default="", help="run this step again, and every step after it")
     ap.add_argument("--debug-view", action="store_true", help="also render the decisions over the edit")
+    ap.add_argument("--captioner", help="Qwen-VL model for the shot descriptions (default Qwen3-VL-4B-Instruct; "
+                                        "Qwen3-VL-2B-Instruct for GPUs with 8 GB)")
     ap.add_argument("--note", action="append", default=[], metavar='N="TEXT"',
                     help='add something the model cannot know to shot N\'s prompt, e.g. 2="His car is black."')
     a = ap.parse_args(argv)
@@ -27,7 +29,7 @@ def main(argv=None):
     if w % 16 or h % 16:
         sys.exit("--size must be multiples of 16")
     run = Run(a.input, a.out or a.input.with_name(f"{a.input.stem}_openreframe"), size=(w, h), seed=a.seed,
-              ratios=tuple(r.strip() for r in a.ratios.split(",")))
+              ratios=tuple(r.strip() for r in a.ratios.split(",")), captioner=a.captioner)
     for step in filter(None, a.redo.split(",")):
         run.reset(step)
     if a.note:
