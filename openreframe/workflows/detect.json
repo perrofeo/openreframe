@@ -1,0 +1,106 @@
+{
+ "load_video": {
+  "class_type": "LoadVideo",
+  "inputs": {
+   "file": "INPUT_VIDEO"
+  },
+  "_meta": {
+   "title": "Input video (proxy)"
+  }
+ },
+ "frames": {
+  "class_type": "GetVideoComponents",
+  "inputs": {
+   "video": [
+    "load_video",
+    0
+   ]
+  }
+ },
+ "detr_model": {
+  "class_type": "UNETLoader",
+  "inputs": {
+   "unet_name": "rt_detr_v4-x-hgnet_fp16.safetensors",
+   "weight_dtype": "default"
+  }
+ },
+ "detr": {
+  "class_type": "RTDETR_detect",
+  "inputs": {
+   "model": [
+    "detr_model",
+    0
+   ],
+   "image": [
+    "frames",
+    0
+   ],
+   "threshold": 0.4,
+   "class_name": "all",
+   "max_detections": 20
+  }
+ },
+ "detr_text": {
+  "class_type": "PreviewAny",
+  "inputs": {
+   "source": [
+    "detr",
+    0
+   ]
+  }
+ },
+ "save_boxes": {
+  "class_type": "SaveText",
+  "inputs": {
+   "text": [
+    "detr_text",
+    0
+   ],
+   "filename_prefix": "openreframe/boxes",
+   "format": "json"
+  }
+ },
+ "face_model": {
+  "class_type": "LoadMediaPipeFaceLandmarker",
+  "inputs": {
+   "model_name": "mediapipe_face_fp32.safetensors"
+  }
+ },
+ "faces": {
+  "class_type": "MediaPipeFaceLandmarker",
+  "inputs": {
+   "face_detection_model": [
+    "face_model",
+    0
+   ],
+   "image": [
+    "frames",
+    0
+   ],
+   "detector_variant": "both",
+   "num_faces": 3,
+   "min_confidence": 0.5,
+   "missing_frame_fallback": "empty"
+  }
+ },
+ "faces_text": {
+  "class_type": "PreviewAny",
+  "inputs": {
+   "source": [
+    "faces",
+    1
+   ]
+  }
+ },
+ "save_faces": {
+  "class_type": "SaveText",
+  "inputs": {
+   "text": [
+    "faces_text",
+    0
+   ],
+   "filename_prefix": "openreframe/faces",
+   "format": "json"
+  }
+ }
+}

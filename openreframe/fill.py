@@ -1,0 +1,48 @@
+"""Where the AI fills: always towards the background, never into what is close to the camera.
+
+Filling below a table edge makes the model invent what is under the table (legs at odd angles,
+the wrong shoes); filling the sky above it does not. Depth decides which border is far.
+"""
+from __future__ import annotations
+
+import re
+
+import cv2
+import numpy as np
+
+FACE_MAX = 0.45     # a face's centre never ends up below this share of the frame height
+CENTER_MAX = 0.60   # nor does the centre of the real pixels: platforms put captions and buttons low
+MIN_BAND = 48       # fill bands thinner than this are not worth it
+
+# Describe only what is visible. An earlier instruction asked for "what is most likely just above and
+# just below", and the captioner obliged: an umbrella floating over a street, lightning in a car's
+# windscreen. The fill model paints whatever the prompt names; the pixels already give it the context.
+CAPTION_INSTRUCTION = (
+    "This is one frame from a shot of a film. In one paragraph of plain English, at most 50 words, describe "
+    "only what is visible: the place, the time of day, the light, the weather, the surfaces and materials. "
+    "If a person is visible, name their clothing in a few words. Do not guess what lies outside the picture, "
+    "do not add anything that is not there, and do not mention the camera, the frame or the image.")
+PROMPT_TAIL = " Cinematic film, natural light, fine grain."
+
+
+def split(depth_png: str, total: int, out_h: int, crop_h: int, face_y_max: float | None) -> dict:
+    """Pixels to fill above and below. Bright = near in the Depth Anything render."""
+    d = cv2.imread(depth_png, cv2.IMREAD_GRAYSCALE).astype(np.float32) / 255
+    band = max(4, int(0.08 * d.shape[0]))
+    near_top, near_bottom = float(d[:band].mean()), float(d[-band:].mean())
+    top = int(round(total * float(np.clip(0.5 + 2.0 * (near_bottom - near_top), 0, 1))))
+    face_cap = max(0, int(FACE_MAX * out_h - face_y_max)) if face_y_max is not None else total
+    top = min(top, face_cap, max(0, int(CENTER_MAX * out_h - crop_h / 2)))
+    if 0 < total - top < MIN_BAND and face_cap >= total:
+        top = total                 # a thin strip under the foreground only invents what is under it
+    top -= top % 2
+    return {"near_top": round(near_top, 3), "near_bottom": round(near_bottom, 3), "top": top, "bottom": total - top}
+
+
+def coherent_time_of_day(captions: list[str]) -> list[str]:
+    """One edit, one time of day: the captioner sometimes calls a night shot 'late afternoon'."""
+    night = sum(bool(re.search(r"\bnight", c or "", re.I)) for c in captions)
+    if night <= len(captions) / 2:
+        return captions
+    day = r"\b(late afternoon sun|late afternoon|cloudy afternoon|afternoon|daytime|daylight|sunlight|sunset|dusk)\b"
+    return [re.sub(day, "night", c or "", flags=re.I) for c in captions]

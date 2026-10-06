@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "openreframe"
+version = "0.1.0"
+description = "Turn a finished 16:9 edit into vertical (9:16, 4:5, 1:1), shot by shot, with open models on ComfyUI."
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.10"
+dependencies = [
+  "comfy-sdk>=0.4,<0.5",
+  "opencv-python-headless>=4.9",
+  "numpy>=1.26",
+]
+
+[project.scripts]
+openreframe = "openreframe.cli:main"
+
+[tool.setuptools]
+packages = ["openreframe"]
+
+[tool.setuptools.package-data]
+openreframe = ["workflows/*.json"]

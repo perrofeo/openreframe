@@ -1,0 +1,17 @@
+# secrets: your Comfy key lives in the environment or in .env, never in git
+.env
+*.env
+.mcp.json
+# local
+.venv/
+__pycache__/
+*.egg-info/
+build/
+dist/
+# runs and media
+*_openreframe/
+work/
+*.mp4
+*.mov
+*.mkv
+!docs/**/*.mp4
