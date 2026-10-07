@@ -31,7 +31,11 @@ def _examples(folder: Path) -> list[tuple[str, str]]:
     return [(str(p), p.stem.replace("_compare", "").replace("_", " ")) for p in sorted(folder.glob("*_compare.mp4"))]
 
 
-def _reframe(video_path, api_key, ratios, captioner):
+TARGETS = {"To vertical (9:16)": ("9:16", ["9:16", "4:5", "1:1"]),
+           "To horizontal (16:9)": ("16:9", ["16:9", "4:3", "1:1"])}
+
+
+def _reframe(video_path, api_key, direction, ratios, captioner):
     import gradio as gr
     # gr.Error shows the message to the visitor; a plain exception only shows "Error" on every box
     if not video_path:
@@ -39,8 +43,10 @@ def _reframe(video_path, api_key, ratios, captioner):
     if not api_key or not api_key.strip():
         raise gr.Error("Paste your Comfy API key (https://platform.comfy.org/profile/api-keys). "
                        "It is used for this run only.")
-    if not ratios:
-        raise gr.Error("Pick at least one ratio.")
+    target, allowed = TARGETS[direction]
+    ratios = [r for r in allowed if r in (ratios or [])]
+    if target not in ratios:
+        ratios = [target] + ratios
     src = Path(video_path)
     if src.stat().st_size > MAX_MB * 1024 * 1024:
         raise gr.Error(f"Keep it under {MAX_MB} MB.")
@@ -55,7 +61,7 @@ def _reframe(video_path, api_key, ratios, captioner):
 
     def job():
         try:
-            run = Run(local, work / "out", target="9:16", ratios=tuple(ratios), api_key=api_key.strip(),
+            run = Run(local, work / "out", target=target, ratios=tuple(ratios), api_key=api_key.strip(),
                       logger=lines.append, captioner=captioner)
             run.run()
             result["ok"] = True
@@ -72,17 +78,18 @@ def _reframe(video_path, api_key, ratios, captioner):
         yield "\n".join(lines[-40:]), None, None, None, None
         return
     out = work / "out"
-    pick = lambda name: str(out / name) if (out / name).exists() else None  # noqa: E731
-    yield ("\n".join(lines[-40:]), pick("input_compare.mp4"), pick("input_9x16.mp4"), pick("input_4x5.mp4"),
-           pick("input_1x1.mp4"))
+    vids = [gr.update(value=str(out / f"input_{r.replace(':', 'x')}.mp4"), label=r) for r in ratios]
+    vids += [gr.update(value=None, label="")] * (3 - len(vids))
+    yield ("\n".join(lines[-40:]), str(out / "input_compare.mp4"), *vids[:3])
 
 
 def build_app(examples: Path):
     import gradio as gr
 
     with gr.Blocks(title="openreframe") as app:
-        gr.Markdown("# openreframe\nTurn a finished 16:9 edit into vertical, **shot by shot**, with open models "
-                    "on ComfyUI. [Code](https://github.com/perrofeo/openreframe)")
+        gr.Markdown("# openreframe\nReframe a finished edit to another ratio, **shot by shot**, with open models "
+                    "on ComfyUI: horizontal to vertical, or vertical to horizontal. "
+                    "[Code](https://github.com/perrofeo/openreframe)")
         with gr.Tab("Examples"):
             ex = _examples(examples)
             if not ex:
@@ -95,20 +102,23 @@ def build_app(examples: Path):
                         "Your key is used for this run only and is never stored.")
             with gr.Row():
                 with gr.Column():
-                    video = gr.Video(label="Your horizontal edit", sources=["upload"])
+                    video = gr.Video(label="Your edit", sources=["upload"])
                     key = gr.Textbox(label="Comfy API key", type="password", placeholder="comfyui-...")
-                    ratios = gr.CheckboxGroup(["9:16", "4:5", "1:1"], value=["9:16", "4:5", "1:1"], label="Ratios")
+                    direction = gr.Radio(list(TARGETS), value="To vertical (9:16)", label="Direction")
+                    ratios = gr.CheckboxGroup(TARGETS["To vertical (9:16)"][1], value=TARGETS["To vertical (9:16)"][1],
+                                              label="Ratios from the same render")
                     captioner = gr.Dropdown(["Qwen3-VL-4B-Instruct", "Qwen3-VL-8B-Instruct", "Qwen3-VL-2B-Instruct"],
                                             value="Qwen3-VL-4B-Instruct", label="Shot captioner")
                     go = gr.Button("Reframe", variant="primary")
                 with gr.Column():
                     log = gr.Textbox(label="Progress", lines=14, max_lines=14, autoscroll=True)
-                    compare = gr.Video(label="Original | 9:16")
+                    compare = gr.Video(label="Original | result")
             with gr.Row():
-                v916 = gr.Video(label="9:16")
-                v45 = gr.Video(label="4:5")
-                v11 = gr.Video(label="1:1")
-            go.click(_reframe, [video, key, ratios, captioner], [log, compare, v916, v45, v11])
+                v1 = gr.Video(label="9:16")
+                v2 = gr.Video(label="4:5")
+                v3 = gr.Video(label="1:1")
+            direction.change(lambda d: gr.update(choices=TARGETS[d][1], value=TARGETS[d][1]), direction, ratios)
+            go.click(_reframe, [video, key, direction, ratios, captioner], [log, compare, v1, v2, v3])
     return app
 
 
