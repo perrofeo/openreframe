@@ -5,14 +5,16 @@ import argparse
 import sys
 from pathlib import Path
 
-from .pipeline import EXTRA, STEPS, Run
+from .pipeline import EXTRA, STEPS, Run, auto_target
+from .video import probe
 
 
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="openreframe", description=__doc__)
     ap.add_argument("input", type=Path, help="horizontal video (a finished edit, with cuts and sound)")
     ap.add_argument("-o", "--out", type=Path, help="output folder (default: <input name>_openreframe)")
-    ap.add_argument("--to", default="9:16", help="target ratio: 9:16 (default), 16:9, 4:5, 1:1, 4:3...")
+    ap.add_argument("--to", default="auto", help="target ratio (default: auto, 9:16 for horizontal footage, "
+                                                 "16:9 for vertical; or any W:H)")
     ap.add_argument("--ratios", help="extra cuts from the same render (default: 4:5,1:1 for 9:16; 4:3,1:1 for 16:9)")
     ap.add_argument("--size", help="render size WxH, multiples of 16 (default: long side 960)")
     ap.add_argument("--seed", type=int, default=6061003)
@@ -31,6 +33,10 @@ def main(argv=None):
     a = ap.parse_args(argv)
     if not a.input.exists():
         sys.exit(f"{a.input}: not found")
+    if a.to == "auto":
+        info = probe(a.input)
+        a.to = auto_target(info["width"], info["height"])
+        print(f"{info['width']}x{info['height']} -> {a.to}")
     size = None
     if a.size:
         size = tuple(int(x) for x in a.size.lower().split("x"))

@@ -46,13 +46,15 @@ export COMFY_API_KEY=...          # https://platform.comfy.org — API access ne
 openreframe my_edit.mp4
 ```
 
-Results land in `my_edit_openreframe/`: `my_edit_9x16.mp4`, `my_edit_4x5.mp4`, `my_edit_1x1.mp4` and
+The direction comes from the footage: horizontal goes vertical, vertical goes horizontal. Results land
+in `my_edit_openreframe/`: `my_edit_9x16.mp4`, `my_edit_4x5.mp4`, `my_edit_1x1.mp4` and
 `my_edit_compare.mp4` (original and result side by side). The run's state is in `work/plan.json`: an
 interrupted run picks up where it stopped, and every shot's render is keyed by everything that defines
 it, so nothing is submitted twice and changing one shot re-renders only that shot.
 
 ```bash
-openreframe phone_clip.mp4 --to 16:9                 # vertical to horizontal (+ 4:3 and 1:1)
+openreframe phone_clip.mp4                           # vertical footage goes 16:9 (+ 4:3 and 1:1) by itself
+openreframe my_edit.mp4 --to 1:1                     # any other target ratio
 openreframe my_edit.mp4 --debug-view                 # also draw the decisions over the edit
 openreframe my_edit.mp4 --note 2="His car is black." # what no model can know, for shot 2
 openreframe my_edit.mp4 --reroll 7                   # shot 7 again, new seed, nothing else re-renders

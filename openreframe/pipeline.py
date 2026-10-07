@@ -23,6 +23,11 @@ def parse_ratio(r: str) -> float:
     return w / h
 
 
+def auto_target(width: int, height: int) -> str:
+    """Horizontal footage goes vertical; vertical (or square) footage goes horizontal."""
+    return "9:16" if width > height else "16:9"
+
+
 def base_size(target: str) -> tuple[int, int]:
     """Render size for the target ratio: long side 960, both sides multiples of 16."""
     a = parse_ratio(target)

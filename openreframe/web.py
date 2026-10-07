@@ -17,7 +17,7 @@ import threading
 import time
 from pathlib import Path
 
-from .pipeline import Run
+from .pipeline import Run, auto_target
 from .video import probe
 
 MAX_SECONDS = 60
@@ -31,11 +31,22 @@ def _examples(folder: Path) -> list[tuple[str, str]]:
     return [(str(p), p.stem.replace("_compare", "").replace("_", " ")) for p in sorted(folder.glob("*_compare.mp4"))]
 
 
-TARGETS = {"To vertical (9:16)": ("9:16", ["9:16", "4:5", "1:1"]),
-           "To horizontal (16:9)": ("16:9", ["16:9", "4:3", "1:1"])}
+OFFERS = {"9:16": ["9:16", "4:5", "1:1"], "16:9": ["16:9", "4:3", "1:1"]}
 
 
-def _reframe(video_path, api_key, direction, ratios, captioner):
+def _offer(video_path):
+    """When an edit is uploaded, say what it is and offer the ratios that make sense for it."""
+    import gradio as gr
+    if not video_path:
+        return gr.update(), gr.update(choices=[], value=[])
+    info = probe(Path(video_path))
+    target = auto_target(info["width"], info["height"])
+    shape = "horizontal" if info["width"] > info["height"] else "vertical" if info["width"] < info["height"] else "square"
+    return (f"Your edit is **{info['width']}x{info['height']}** ({shape}): it will be reframed to these ratios.",
+            gr.update(choices=OFFERS[target], value=OFFERS[target]))
+
+
+def _reframe(video_path, api_key, ratios, captioner):
     import gradio as gr
     # gr.Error shows the message to the visitor; a plain exception only shows "Error" on every box
     if not video_path:
@@ -43,14 +54,14 @@ def _reframe(video_path, api_key, direction, ratios, captioner):
     if not api_key or not api_key.strip():
         raise gr.Error("Paste your Comfy API key (https://platform.comfy.org/profile/api-keys). "
                        "It is used for this run only.")
-    target, allowed = TARGETS[direction]
-    ratios = [r for r in allowed if r in (ratios or [])]
-    if target not in ratios:
-        ratios = [target] + ratios
+    if not ratios:
+        raise gr.Error("Pick at least one ratio.")
     src = Path(video_path)
     if src.stat().st_size > MAX_MB * 1024 * 1024:
         raise gr.Error(f"Keep it under {MAX_MB} MB.")
     info = probe(src)
+    target = auto_target(info["width"], info["height"])
+    ratios = [target] + [r for r in OFFERS[target] if r in ratios and r != target]
     if info["frames"] / info["fps"] > MAX_SECONDS:
         raise gr.Error(f"This demo takes edits up to {MAX_SECONDS} s; the command line has no limit.")
     work = Path(tempfile.mkdtemp(prefix="openreframe_"))
@@ -104,9 +115,8 @@ def build_app(examples: Path):
                 with gr.Column():
                     video = gr.Video(label="Your edit", sources=["upload"])
                     key = gr.Textbox(label="Comfy API key", type="password", placeholder="comfyui-...")
-                    direction = gr.Radio(list(TARGETS), value="To vertical (9:16)", label="Direction")
-                    ratios = gr.CheckboxGroup(TARGETS["To vertical (9:16)"][1], value=TARGETS["To vertical (9:16)"][1],
-                                              label="Ratios from the same render")
+                    shape = gr.Markdown("Upload an edit: horizontal footage goes vertical, vertical goes horizontal.")
+                    ratios = gr.CheckboxGroup([], value=[], label="Output ratios")
                     captioner = gr.Dropdown(["Qwen3-VL-4B-Instruct", "Qwen3-VL-8B-Instruct", "Qwen3-VL-2B-Instruct"],
                                             value="Qwen3-VL-4B-Instruct", label="Shot captioner")
                     go = gr.Button("Reframe", variant="primary")
@@ -117,8 +127,8 @@ def build_app(examples: Path):
                 v1 = gr.Video(label="9:16")
                 v2 = gr.Video(label="4:5")
                 v3 = gr.Video(label="1:1")
-            direction.change(lambda d: gr.update(choices=TARGETS[d][1], value=TARGETS[d][1]), direction, ratios)
-            go.click(_reframe, [video, key, direction, ratios, captioner], [log, compare, v1, v2, v3])
+            video.change(_offer, video, [shape, ratios])
+            go.click(_reframe, [video, key, ratios, captioner], [log, compare, v1, v2, v3])
     return app
 
 
