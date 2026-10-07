@@ -6,6 +6,7 @@ the wrong shoes); filling the sky above it does not. Depth decides which border 
 from __future__ import annotations
 
 import re
+from pathlib import Path
 
 import cv2
 import numpy as np
@@ -58,6 +59,8 @@ def windows(n: int, window: int = WINDOW, overlap: int = OVERLAP) -> list[tuple[
 
 
 def sky_above(sky_png: str) -> bool:
+    if not Path(sky_png).exists():           # no sky model: look() has already said so
+        return False
     m = cv2.imread(sky_png, cv2.IMREAD_GRAYSCALE)
     if m is None:
         return False

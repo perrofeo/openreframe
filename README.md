@@ -69,9 +69,11 @@ model, 121 frames by default; smaller needs less VRAM, `0` renders every shot wh
 
 ## On your own ComfyUI
 
-The SDK talks to a local ComfyUI through [comfy-api-proxy](https://github.com/Comfy-Org/comfy-api-proxy).
-Tested on a fresh install (ComfyUI 0.39, RTX 4060 Ti 8 GB): cuts, detection, depth and captions gave
-the same decisions on all 24 shots of our test edit as on Comfy Cloud.
+**No Comfy account, no API key, no credits.** The SDK talks to your ComfyUI through
+[comfy-api-proxy](https://github.com/Comfy-Org/comfy-api-proxy), and everything runs on your GPU; the
+web app hides the key field when `COMFY_BASE_URL` is set. Tested on a fresh install (ComfyUI 0.39,
+RTX 4060 Ti 8 GB): cuts, detection, depth and captions gave the same decisions on all 24 shots of our
+test edit as on Comfy Cloud, and the sky mask runs there too.
 
 ```bash
 pip install comfy-cli comfy-api-proxy
@@ -81,7 +83,7 @@ ComfyUI/.venv/bin/pip install -r ComfyUI/custom_nodes/ComfyUI-QwenVL/requirement
 # models: see the table below
 ComfyUI/.venv/bin/python ComfyUI/main.py --port 8188 &
 comfy-api-proxy &                                     # ComfyUI on :8188 -> API on :8189
-export COMFY_BASE_URL=http://127.0.0.1:8189 COMFY_API_KEY=local
+export COMFY_BASE_URL=http://127.0.0.1:8189            # your ComfyUI: no API key needed
 openreframe my_edit.mp4 --captioner Qwen3-VL-2B-Instruct
 ```
 
@@ -96,6 +98,9 @@ openreframe my_edit.mp4 --captioner Qwen3-VL-2B-Instruct
 | UMT5-XXL | `umt5_xxl_fp16.safetensors` | `text_encoders` | same |
 | Wan 2.1 VAE | `wan_2.1_vae.safetensors` | `vae` | same |
 | lightx2v step distill | `lightx2v_T2V_14B_cfg_step_distill_v2_lora_rank64_bf16.safetensors` | `loras` | lightx2v |
+
+If a model is missing, ComfyUI skips that output and runs the rest; openreframe checks what came back and
+stops with the reason (or, for the optional sky mask, warns and goes on without it).
 
 The analysis runs on an 8 GB card with the 2B captioner. The 14B fill model needs a large GPU (we use
 Comfy Cloud for that step); on a small one, swap in a lighter fill workflow (next section).

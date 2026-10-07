@@ -3,6 +3,7 @@
 - Examples: finished results, free to watch.
 - Try it: upload an edit and paste YOUR Comfy API key. The key lives only in memory for that run; it
   is never logged, stored or written to the run folder. The GPU time is billed to the key's owner.
+  With COMFY_BASE_URL pointing at your own ComfyUI there is no key to paste: it runs on your GPU.
 
     pip install "openreframe[web]"
     OPENREFRAME_EXAMPLES=./examples openreframe-web --port 7860
@@ -22,6 +23,7 @@ from .video import probe
 
 MAX_SECONDS = 60
 MAX_MB = 200
+LOCAL = os.environ.get("COMFY_BASE_URL", "")   # your own ComfyUI (through comfy-api-proxy): no key, no credits
 
 
 def _examples(folder: Path) -> list[tuple[str, str]]:
@@ -52,7 +54,8 @@ def _reframe(video_path, api_key, ratios, captioner):
     # gr.Error shows the message to the visitor; a plain exception only shows "Error" on every box
     if not video_path:
         raise gr.Error("Upload a video first.")
-    if not api_key or not api_key.strip():
+    api_key = (api_key or "").strip()
+    if not api_key and not LOCAL:
         raise gr.Error("Paste your Comfy API key (https://platform.comfy.org/profile/api-keys). "
                        "It is used for this run only.")
     if not ratios:
@@ -73,7 +76,7 @@ def _reframe(video_path, api_key, ratios, captioner):
 
     def job():
         try:
-            run = Run(local, work / "out", target=target, ratios=tuple(ratios), api_key=api_key.strip(),
+            run = Run(local, work / "out", target=target, ratios=tuple(ratios), api_key=api_key or None,
                       logger=lines.append, captioner=captioner)
             run.run()
             result["ok"] = True
@@ -109,13 +112,15 @@ def build_app(examples: Path):
             for path, title in ex:
                 gr.Video(value=path, label=title, interactive=False)
         with gr.Tab("Try it"):
-            gr.Markdown(f"Up to {MAX_SECONDS} s and {MAX_MB} MB. Runs on **your** Comfy Cloud credits "
-                        "(API access needs a paid plan): about a minute of GPU per 20 s of edit. "
-                        "Your key is used for this run only and is never stored.")
+            gr.Markdown(f"Up to {MAX_SECONDS} s and {MAX_MB} MB. " + (
+                f"Runs on your own ComfyUI ({LOCAL}): no key, no credits." if LOCAL else
+                "Runs on **your** Comfy Cloud credits (API access needs a paid plan): about a minute of GPU "
+                "per 20 s of edit. Your key is used for this run only and is never stored."))
             with gr.Row():
                 with gr.Column():
                     video = gr.Video(label="Your edit", sources=["upload"])
-                    key = gr.Textbox(label="Comfy API key", type="password", placeholder="comfyui-...")
+                    key = gr.Textbox(label="Comfy API key", type="password", placeholder="comfyui-...",
+                                     visible=not LOCAL)
                     shape = gr.Markdown("Upload an edit: horizontal footage goes vertical, vertical goes horizontal.")
                     ratios = gr.CheckboxGroup([], value=[], label="Output ratios")
                     captioner = gr.Dropdown(["Qwen3-VL-4B-Instruct", "Qwen3-VL-8B-Instruct", "Qwen3-VL-2B-Instruct"],

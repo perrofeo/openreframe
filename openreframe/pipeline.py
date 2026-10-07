@@ -220,12 +220,24 @@ class Run:
         if not todo:
             return
         job = self.c.run(comfy.build(self.c, graph, inputs))
+        # ComfyUI drops an output whose model is missing and runs the rest: check what came back
+        missing = {}
         for k, parts in todo.items():
             p, d = f"s{k:03d}_", self.shot_dir(k)
             for part in parts:
                 _, save, fname = self.LOOK_PARTS[part]
                 comfy.download(job, p + save, d / fname)
-            self.state["shots"][k]["caption"] = (d / "caption.txt").read_text(encoding="utf-8").strip()
+                if not (d / fname).exists():
+                    missing.setdefault(part, []).append(k + 1)
+        if missing.keys() - {"sky"}:
+            raise RuntimeError(f"no {' or '.join(sorted(missing.keys() - {'sky'}))} came back for shots "
+                               f"{sorted({n for part, ks in missing.items() if part != 'sky' for n in ks})}: "
+                               "a model is probably missing (the ComfyUI log names it)")
+        if "sky" in missing:
+            self._log(f"  WARNING: no sky mask for shots {missing['sky']}, so no prompt says the sky is open. "
+                      f"Is {base['sky_model']['inputs']['model_name']} in models/geometry_estimation?")
+        for k in todo:
+            self.state["shots"][k]["caption"] = (self.shot_dir(k) / "caption.txt").read_text(encoding="utf-8").strip()
         self._log(f"  depth, sky and caption for {len(todo)} shots")
 
     # -- 4. where to fill (local) ---------------------------------------------------------------
