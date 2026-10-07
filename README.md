@@ -15,6 +15,10 @@ openreframe takes **the whole edit**: it finds every cut, decides for each shot 
 much to crop, and lets the model invent only what is missing, **towards the background**. Your sound
 comes through untouched.
 
+**Who it is for:** filmmakers and editors who cut in 16:9 and need the same film on Reels, Shorts and
+TikTok; social teams turning one campaign edit into every feed format; and anyone whose phone footage
+has to sit in a 16:9 edit or a YouTube video.
+
 Built for the [Comfy Developer Platform Challenge](https://blog.comfy.org/p/open-call-comfy-dev-platform-challenge)
 on the official [Comfy SDK](https://docs.comfy.org/development/api-development/sdks): the same code runs
 on Comfy Cloud or on your own ComfyUI.
