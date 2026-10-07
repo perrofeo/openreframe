@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import shutil
 from pathlib import Path
 
 import cv2
@@ -182,6 +183,10 @@ class Run:
                                s["crop_w"], s["x0"], out_w, out_h, base], sort_keys=True)
             key = f"openreframe-{digest}-{k:03d}-{hashlib.sha1(spec.encode()).hexdigest()[:16]}"
             if s.get("fill_key") == key and (self.shot_dir(k) / "fill.mp4").exists():
+                continue
+            if s["top"] + s["bottom"] == 0:           # nothing to invent (e.g. already vertical): no GPU, no cost
+                shutil.copy(self.shot_dir(k) / "crop.mp4", self.shot_dir(k) / "fill.mp4")
+                s["fill_key"] = key
                 continue
             if s.get("job_key") != key or not s.get("job_id"):
                 wf = comfy.build(self.c, base, {
