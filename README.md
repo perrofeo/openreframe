@@ -44,6 +44,8 @@ cuts, boxes, crop window and invented bands over your edit.
 
 ## Quick start (Comfy Cloud)
 
+Needs Python 3.10+ and [ffmpeg](https://ffmpeg.org) on your PATH.
+
 ```bash
 pip install git+https://github.com/perrofeo/openreframe
 export COMFY_API_KEY=...          # https://platform.comfy.org — API access needs a paid Cloud plan
@@ -113,7 +115,7 @@ openreframe my_edit.mp4 --captioner Qwen3-VL-2B-Instruct
 | Wan 2.1 VACE 14B | `wan2.1_vace_14B_fp16.safetensors` | `diffusion_models` | [Comfy-Org/Wan_2.1_ComfyUI_repackaged](https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged) |
 | UMT5-XXL | `umt5_xxl_fp16.safetensors` | `text_encoders` | same |
 | Wan 2.1 VAE | `wan_2.1_vae.safetensors` | `vae` | same |
-| lightx2v step distill | `lightx2v_T2V_14B_cfg_step_distill_v2_lora_rank64_bf16.safetensors` | `loras` | lightx2v |
+| lightx2v step distill | `lightx2v_T2V_14B_cfg_step_distill_v2_lora_rank64_bf16.safetensors` | `loras` | [Kijai/WanVideo_comfy](https://huggingface.co/Kijai/WanVideo_comfy) (`Lightx2v/`) |
 
 If a model is missing, ComfyUI skips that output and runs the rest; openreframe checks what came back and
 stops with the reason (or, for the optional sky mask, warns and goes on without it).
@@ -137,7 +139,7 @@ Everything that runs is open source or open weights, commercially usable:
 | Piece | License |
 |---|---|
 | Wan 2.1 VACE 14B, UMT5, Wan VAE | Apache-2.0 |
-| lightx2v step-distill LoRA | Apache-2.0 |
+| lightx2v step-distill LoRA | Apache-2.0 (the file we load is Kijai's extraction of [lightx2v's distilled weights](https://huggingface.co/lightx2v/Wan2.1-T2V-14B-StepDistill-CfgDistill-Lightx2v); lightx2v also publishes its own rank-64 LoRA there, not tested here) |
 | RT-DETR v4 | Apache-2.0 |
 | MediaPipe face detector | Apache-2.0 |
 | Depth Anything 3 Small and Mono Large | Apache-2.0 (not DA3-Large, which is non-commercial) |

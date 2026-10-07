@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "openreframe"
 version = "0.1.0"
-description = "Turn a finished 16:9 edit into vertical (9:16, 4:5, 1:1), shot by shot, with open models on ComfyUI."
+description = "Reframe a finished edit to another aspect ratio, shot by shot (16:9 to 9:16, 4:5, 1:1, or vertical to 16:9), with open models on ComfyUI."
 readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.10"
