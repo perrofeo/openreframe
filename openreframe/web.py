@@ -38,12 +38,13 @@ def _offer(video_path):
     """When an edit is uploaded, say what it is and offer the ratios that make sense for it."""
     import gradio as gr
     if not video_path:
-        return gr.update(), gr.update(choices=[], value=[])
+        return (gr.update(), gr.update(choices=[], value=[]), *[gr.update() for _ in range(3)])
     info = probe(Path(video_path))
     target = auto_target(info["width"], info["height"])
     shape = "horizontal" if info["width"] > info["height"] else "vertical" if info["width"] < info["height"] else "square"
     return (f"Your edit is **{info['width']}x{info['height']}** ({shape}): it will be reframed to these ratios.",
-            gr.update(choices=OFFERS[target], value=OFFERS[target]))
+            gr.update(choices=OFFERS[target], value=OFFERS[target]),
+            *[gr.update(label=r, value=None) for r in OFFERS[target]])
 
 
 def _reframe(video_path, api_key, ratios, captioner):
@@ -127,7 +128,7 @@ def build_app(examples: Path):
                 v1 = gr.Video(label="9:16")
                 v2 = gr.Video(label="4:5")
                 v3 = gr.Video(label="1:1")
-            video.change(_offer, video, [shape, ratios])
+            video.change(_offer, video, [shape, ratios, v1, v2, v3])
             go.click(_reframe, [video, key, ratios, captioner], [log, compare, v1, v2, v3])
     return app
 
