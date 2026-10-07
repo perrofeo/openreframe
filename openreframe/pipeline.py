@@ -6,6 +6,7 @@ import copy
 import hashlib
 import json
 import shutil
+import time
 from pathlib import Path
 
 import cv2
@@ -51,10 +52,20 @@ class Run:
     def save(self):
         self.state_path.write_text(json.dumps(self.state, indent=1, ensure_ascii=False))
 
+    def shot_seed(self, k: int) -> int:
+        """Each shot has its own seed; --reroll N moves shot N to a new one."""
+        return self.state["seed"] + k + 1000 * self.state.get("rerolls", {}).get(str(k + 1), 0)
+
     def shot_dir(self, k: int) -> Path:
         d = self.work / "shots" / f"{k:03d}"
         d.mkdir(parents=True, exist_ok=True)
         return d
+
+    def recaption(self):
+        for k, s in enumerate(self.state.get("shots", [])):
+            s.pop("caption", None)
+            (self.work / "shots" / f"{k:03d}" / "caption.txt").unlink(missing_ok=True)
+        self.reset("look")
 
     def reset(self, step: str):
         """Run a step again, and the steps after it. Renders are reused when their inputs did not change."""
@@ -62,10 +73,10 @@ class Run:
         for st in order[order.index(step):]:
             if st in self.state["done"]:
                 self.state["done"].remove(st)
-        if step == "look":
-            for k, s in enumerate(self.state.get("shots", [])):
-                s.pop("caption", None)
-                (self.work / "shots" / f"{k:03d}" / "caption.txt").unlink(missing_ok=True)
+        if step == "look":                        # captions are kept; --recaption asks for new ones
+            for k in range(len(self.state.get("shots", []))):
+                for fname in ("depth.png", "sky.png"):
+                    (self.work / "shots" / f"{k:03d}" / fname).unlink(missing_ok=True)
         self.save()
 
     def run(self, steps=STEPS):
@@ -112,7 +123,8 @@ class Run:
             s = shots[k]
             a, n = s["start"], len(frames)
             s["n"] = n
-            s.update(framing.plan_shot(frames, boxes[a:a + n], faces[a:a + n], out_w, out_h))
+            only = str(k + 1) in self.state.get("crop_only", [])
+            s.update(framing.plan_shot(frames, boxes[a:a + n], faces[a:a + n], out_w, out_h, crop_only=only))
             crops = framing.crop_frames(frames, s["x0"], s["crop_w"], out_w, s["crop_h"])
             s["length"] = n + (-(n - 1)) % 4                  # Wan wants 4k+1 frames: repeat the last one
             crops += [crops[-1]] * (s["length"] - n)
@@ -120,43 +132,51 @@ class Run:
             video.write_mp4(crops, d / "crop.mp4", fps, crf=10)
             cv2.imwrite(str(d / "middle.png"), crops[n // 2])
             self._log(f"  shot {k + 1:3d}: {n:4d} fr  crop {s['crop_w']}px ({s['crop_w'] / frames[0].shape[0]:.2f}:1)"
-                f"  AI fills {1 - s['crop_h'] / out_h:.0%}  {'face' if s['has_face'] else 'subjects/motion'}")
+                f"  AI fills {1 - s['crop_h'] / out_h:.0%}  {'face' if s['has_face'] else 'subjects/motion'}"
+                f"{'  (crop only)' if only else ''}")
 
     # -- 3. depth + caption per shot (Comfy, one job) ---------------------------------------------
+    LOOK_PARTS = {"depth": (("depth_run", "depth", "save_depth"), "save_depth", "depth.png"),
+                  "sky": (("sky_run", "sky", "save_sky"), "save_sky", "sky.png"),
+                  "caption": (("caption", "save_caption"), "save_caption", "caption.txt")}
+    LOOK_SHARED = {"depth_model", "sky_model"}
+
     def look(self):
+        """One Comfy job for every shot that still lacks its depth map, sky mask or caption."""
         base = comfy.template("look.json")
-        shared = {"depth_model"}
-        graph, todo = {}, []
-        for k, s in enumerate(self.state["shots"]):
-            if s.get("caption") and (self.shot_dir(k) / "depth.png").exists():
+        graph, inputs, todo = {}, {}, {}
+        for k in range(len(self.state["shots"])):
+            d = self.shot_dir(k)
+            parts = [part for part, (_, _, fname) in self.LOOK_PARTS.items() if not (d / fname).exists()]
+            if not parts:
                 continue
-            todo.append(k)
+            todo[k] = parts
             p = f"s{k:03d}_"
-            for nid, node in base.items():
-                if nid in shared:
-                    graph[nid] = copy.deepcopy(node)
-                    continue
-                node = copy.deepcopy(node)
+            wanted = {"image"} | {n for part in parts for n in self.LOOK_PARTS[part][0]}
+            for nid in wanted:
+                node = copy.deepcopy(base[nid])
                 for name, v in node["inputs"].items():
                     if isinstance(v, list) and len(v) == 2 and isinstance(v[0], str):
-                        node["inputs"][name] = [v[0] if v[0] in shared else p + v[0], v[1]]
+                        if v[0] in self.LOOK_SHARED:
+                            graph[v[0]] = copy.deepcopy(base[v[0]])
+                        else:
+                            node["inputs"][name] = [p + v[0], v[1]]
                 graph[p + nid] = node
+            inputs[(p + "image", "image")] = d / "middle.png"
+            if "caption" in parts:
+                inputs[(p + "caption", "custom_prompt")] = fill.CAPTION_INSTRUCTION
+                if self.state.get("captioner"):
+                    inputs[(p + "caption", "model_name")] = self.state["captioner"]
         if not todo:
             return
-        inputs = {}
-        for k in todo:
-            p = f"s{k:03d}_"
-            inputs[(p + "image", "image")] = self.shot_dir(k) / "middle.png"
-            inputs[(p + "caption", "custom_prompt")] = fill.CAPTION_INSTRUCTION
-            if self.state.get("captioner"):
-                inputs[(p + "caption", "model_name")] = self.state["captioner"]
         job = self.c.run(comfy.build(self.c, graph, inputs))
-        for k in todo:
+        for k, parts in todo.items():
             p, d = f"s{k:03d}_", self.shot_dir(k)
-            comfy.download(job, p + "save_depth", d / "depth.png")
-            comfy.download(job, p + "save_caption", d / "caption.txt")
+            for part in parts:
+                _, save, fname = self.LOOK_PARTS[part]
+                comfy.download(job, p + save, d / fname)
             self.state["shots"][k]["caption"] = (d / "caption.txt").read_text(encoding="utf-8").strip()
-        self._log(f"  depth and caption for {len(todo)} shots")
+        self._log(f"  depth, sky and caption for {len(todo)} shots")
 
     # -- 4. where to fill (local) ---------------------------------------------------------------
     def split(self):
@@ -167,7 +187,10 @@ class Run:
             s.update(fill.split(str(self.shot_dir(k) / "depth.png"), out_h - s["crop_h"], out_h, s["crop_h"],
                                 s["face_y_max"]))
             note = self.state.get("notes", {}).get(str(k + 1), "")
-            s["prompt"] = cap + (" " + note if note else "") + fill.PROMPT_TAIL
+            sky = fill.sky_above(str(self.shot_dir(k) / "sky.png")) if s["top"] else False
+            s["sky_above"] = sky
+            s["prompt"] = (cap + (" " + fill.SKY_PHRASE if sky else "") + (" " + note if note else "")
+                           + fill.PROMPT_TAIL)
             self._log(f"  shot {k + 1:3d}: fill {s['top']}px above, {s['bottom']}px below")
 
     # -- 5. outpaint every shot (Comfy, one job per shot) ----------------------------------------
@@ -179,7 +202,7 @@ class Run:
         for k, s in enumerate(self.state["shots"]):
             # the key covers everything that defines a shot's render, so a result is reused only when
             # nothing changed, a changed note re-renders just that shot, and nothing is paid twice
-            spec = json.dumps([s["prompt"], s["top"], s["bottom"], s["length"], self.state["seed"] + k,
+            spec = json.dumps([s["prompt"], s["top"], s["bottom"], s["length"], self.shot_seed(k),
                                s["crop_w"], s["x0"], out_w, out_h, base], sort_keys=True)
             key = f"openreframe-{digest}-{k:03d}-{hashlib.sha1(spec.encode()).hexdigest()[:16]}"
             if s.get("fill_key") == key and (self.shot_dir(k) / "fill.mp4").exists():
@@ -195,21 +218,39 @@ class Run:
                     ("mask_rep", "amount"): s["length"],
                     ("vace", "width"): out_w, ("vace", "height"): out_h, ("vace", "length"): s["length"],
                     ("positive", "text"): s["prompt"],
-                    ("sampler", "seed"): self.state["seed"] + k,
+                    ("sampler", "seed"): self.shot_seed(k),
                     ("save", "filename_prefix"): f"openreframe/{digest}_{k:03d}"})
                 s["job_id"], s["job_key"] = self.c.submit(wf, idempotency_key=key).id, key
                 self.save()
             pending.append(k)
         self._log(f"  {len(pending)} shots to render, {len(self.state['shots']) - len(pending)} reused")
-        for k in pending:
-            s = self.state["shots"][k]
-            job = self.c.jobs.get(s["job_id"])
-            job.wait()
-            job.result()
-            comfy.download(job, "save", self.shot_dir(k) / "fill.mp4")
-            s["fill_key"] = s["job_key"]
-            self.save()
-            self._log(f"  shot {k + 1:3d} ready")
+        # poll every job and report the queue, so a run waiting for a free GPU never looks frozen;
+        # download each shot as soon as it is done, in whatever order they finish
+        jobs = {k: self.c.jobs.get(self.state["shots"][k]["job_id"]) for k in pending}
+        last = None
+        while jobs:
+            counts = {"waiting": 0, "running": 0}
+            for k, job in list(jobs.items()):
+                job.refresh()
+                st = str(job.status).lower()
+                if any(w in st for w in ("succeed", "complete", "success")):
+                    s = self.state["shots"][k]
+                    comfy.download(job, "save", self.shot_dir(k) / "fill.mp4")
+                    s["fill_key"] = s["job_key"]
+                    self.save()
+                    del jobs[k]
+                    self._log(f"  shot {k + 1:3d} ready")
+                elif any(w in st for w in ("fail", "error", "cancel")):
+                    job.result()                          # raises with the per-node detail
+                elif "run" in st or "progress" in st:
+                    counts["running"] += 1
+                else:
+                    counts["waiting"] += 1
+            if jobs and counts != last:
+                self._log(f"  {counts['running']} rendering, {counts['waiting']} waiting in the Comfy queue")
+                last = counts
+            if jobs:
+                time.sleep(10)
 
     # -- 6. paste back, join, audio, other ratios (local) ---------------------------------------------
     def assemble(self):

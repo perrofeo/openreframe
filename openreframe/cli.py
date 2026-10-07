@@ -18,6 +18,11 @@ def main(argv=None):
     ap.add_argument("--steps", default=",".join(STEPS), help=f"run only some steps: {','.join(STEPS)}")
     ap.add_argument("--redo", default="", help="run this step again, and every step after it")
     ap.add_argument("--debug-view", action="store_true", help="also render the decisions over the edit")
+    ap.add_argument("--reroll", action="append", default=[], metavar="N",
+                    help="render shot N again with a new seed (only that shot is re-rendered)")
+    ap.add_argument("--crop-only", action="append", default=[], metavar="N",
+                    help="shot N gets a plain crop, nothing invented (for shots the model cannot extend well)")
+    ap.add_argument("--recaption", action="store_true", help="describe every shot again (otherwise captions are kept)")
     ap.add_argument("--captioner", help="Qwen-VL model for the shot descriptions (default Qwen3-VL-4B-Instruct; "
                                         "Qwen3-VL-2B-Instruct for GPUs with 8 GB)")
     ap.add_argument("--note", action="append", default=[], metavar='N="TEXT"',
@@ -30,6 +35,19 @@ def main(argv=None):
         sys.exit("--size must be multiples of 16")
     run = Run(a.input, a.out or a.input.with_name(f"{a.input.stem}_openreframe"), size=(w, h), seed=a.seed,
               ratios=tuple(r.strip() for r in a.ratios.split(",")), captioner=a.captioner)
+    if a.crop_only:
+        co = run.state.setdefault("crop_only", [])
+        co += [str(int(n)) for n in a.crop_only if str(int(n)) not in co]
+        if "analyze" in run.state["done"]:
+            run.reset("analyze")                  # renders of the other shots are reused
+    if a.recaption:
+        run.recaption()
+    if a.reroll:
+        rr = run.state.setdefault("rerolls", {})
+        for n in a.reroll:
+            rr[str(int(n))] = rr.get(str(int(n)), 0) + 1
+        if "fill" in run.state["done"]:
+            run.reset("fill")                     # only the rerolled shots render again
     for step in filter(None, a.redo.split(",")):
         run.reset(step)
     if a.note:

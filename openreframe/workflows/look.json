@@ -80,5 +80,52 @@
    "filename_prefix": "openreframe/caption",
    "format": "txt"
   }
+ },
+ "sky_model": {
+  "class_type": "LoadDA3Model",
+  "inputs": {
+   "model_name": "depth_anything_3_mono_large.safetensors",
+   "weight_dtype": "default"
+  },
+  "_meta": {
+   "title": "Mono model: has a sky mask"
+  }
+ },
+ "sky_run": {
+  "class_type": "DA3Inference",
+  "inputs": {
+   "da3_model": [
+    "sky_model",
+    0
+   ],
+   "image": [
+    "image",
+    0
+   ],
+   "resolution": 504,
+   "resize_method": "upper_bound_resize",
+   "mode": "mono"
+  }
+ },
+ "sky": {
+  "class_type": "DA3Render",
+  "inputs": {
+   "da3_geometry": [
+    "sky_run",
+    0
+   ],
+   "output": "sky_mask",
+   "output.colored": false
+  }
+ },
+ "save_sky": {
+  "class_type": "SaveImage",
+  "inputs": {
+   "images": [
+    "sky",
+    0
+   ],
+   "filename_prefix": "openreframe/sky"
+  }
  }
 }

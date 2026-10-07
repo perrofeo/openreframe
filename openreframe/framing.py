@@ -32,8 +32,10 @@ def motion_profile(frames: list[np.ndarray]) -> np.ndarray:
     return np.maximum(mov - np.median(mov, axis=1, keepdims=True), 0)   # drop uniform (camera) motion
 
 
-def plan_shot(frames, boxes, faces, out_w: int, out_h: int) -> dict:
-    """boxes/faces: per frame, lists of {x, y, width, height, label, score} in source pixels."""
+def plan_shot(frames, boxes, faces, out_w: int, out_h: int, crop_only: bool = False) -> dict:
+    """boxes/faces: per frame, lists of {x, y, width, height, label, score} in source pixels.
+    crop_only: the director's call for a shot the model cannot extend well: a plain crop at the target
+    ratio, still following who matters, with nothing invented."""
     n = len(frames)
     H, W = frames[0].shape[:2]
     mov = motion_profile(frames)
@@ -82,7 +84,11 @@ def plan_shot(frames, boxes, faces, out_w: int, out_h: int) -> dict:
     if has_face:
         widest = max(f[2] - f[0] for f in face)
         crop_w = min(min(W, _even(H * CROP_RATIOS[-1])), max(crop_w, min(W, _even(widest / 0.5))))
+    if crop_only:
+        crop_w = min(W, _even(H * out_w / out_h))
     crop_h = _even(H * out_w / crop_w)          # height of the real pixels once scaled to out_w
+    if out_h - crop_h < 16:                     # a few pixels short is rounding: stretch, do not invent them
+        crop_h = out_h
     crop_h = min(crop_h, out_h)
 
     margin = FACE_MARGIN * crop_w

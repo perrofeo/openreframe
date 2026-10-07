@@ -61,15 +61,16 @@ def add_audio(silent: Path, source: Path, dest: Path, has_audio: bool) -> None:
     if not has_audio:
         silent.replace(dest)
         return
+    # the picture sets the length: pad the audio with silence instead of cutting frames when it runs short
     subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(silent), "-i", str(source), "-map", "0:v", "-map", "1:a",
-                    "-c:v", "copy", "-c:a", "aac", "-b:a", "256k", "-shortest", str(dest)], check=True)
+                    "-c:v", "copy", "-af", "apad", "-c:a", "aac", "-b:a", "256k", "-shortest", str(dest)], check=True)
     silent.unlink()
 
 
 def side_by_side(source: Path, vertical: Path, dest: Path, out_h: int) -> None:
     subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(source), "-i", str(vertical), "-filter_complex",
                     f"[0:v]scale=-2:{out_h}[o];[o][1:v]hstack=2,format=yuv420p[v]", "-map", "[v]", "-map", "1:a?",
-                    "-c:v", "libx264", "-crf", "18", "-c:a", "copy", "-shortest", str(dest)], check=True)
+                    "-c:v", "libx264", "-crf", "18", "-c:a", "copy", str(dest)], check=True)
 
 
 def ai_frames_of(path: Path, n: int):

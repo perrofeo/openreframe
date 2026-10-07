@@ -23,6 +23,18 @@ CAPTION_INSTRUCTION = (
     "If a person is visible, name their clothing in a few words. Do not guess what lies outside the picture, "
     "do not add anything that is not there, and do not mention the camera, the frame or the image.")
 PROMPT_TAIL = " Cinematic film, natural light, fine grain."
+# Filling above an open sky, the model sometimes builds a roof or a ceiling (a rooftop at night got a flat
+# white ceiling). Depth alone cannot tell sky from far walls; Depth Anything 3 mono has a sky mask.
+SKY_PHRASE = "Open sky continues above; nothing overhead."
+SKY_SHARE = 0.30
+
+
+def sky_above(sky_png: str) -> bool:
+    m = cv2.imread(sky_png, cv2.IMREAD_GRAYSCALE)
+    if m is None:
+        return False
+    band = max(4, int(0.08 * m.shape[0]))
+    return float(m[:band].astype(np.float32).mean() / 255) >= SKY_SHARE
 
 
 def split(depth_png: str, total: int, out_h: int, crop_h: int, face_y_max: float | None) -> dict:
