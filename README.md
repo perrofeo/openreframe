@@ -27,13 +27,15 @@ on Comfy Cloud or on your own ComfyUI.
 | **Where to invent** | ComfyUI: Depth Anything 3 | Towards whatever is **far**. Filling the sky above a table works; filling below the table edge makes the model invent what is under it. For vertical targets a face never ends up below 45 % of the height, nor the real image's centre below 60 %, where platforms put captions and buttons. |
 | **What to invent** | ComfyUI: Qwen3-VL, DA3 mono | A short description of **what is visible** becomes each shot's prompt. Asked to guess what lies beyond the frame, the captioner invented an umbrella and a lightning bolt, and the fill model painted them. One time of day for the whole edit. When the fill borders an open sky (DA3's sky mask), the prompt says so. |
 | **Invent it** | ComfyUI: Wan 2.1 VACE 14B | Outpainting with the real pixels as context, 4 steps with a step-distill LoRA. |
+| **Long shots** | ComfyUI + local | Wan is trained on short clips. A shot longer than 5 s is rendered in overlapping windows: each window starts from the last 17 frames of the one before, real pixels pasted back, which the model keeps and carries on; across those frames the picture fades from one window to the next. |
 | **Put it back** | local | The original pixels are pasted back over the result (16 px feather), shots are joined, the original audio goes on top, and the other ratios (4:5 and 1:1, or 4:3 and 1:1) are cut from the main render around the real image. |
 
 Going horizontal is the same problem turned 90 degrees: the tool works in one orientation and turns
 the frames on the way in and out, so every rule above serves both directions.
 
-Tested on: a 16:9 car chase (24 shots in 21 s), a 16:9 DJ set, 4:3 handheld night footage, a 2.29:1
-cinemascope two-shot, and vertical footage widened back to 16:9 next to the real 16:9 it was cut from.
+Tested on: a 16:9 car chase (24 shots in 21 s), a 16:9 DJ set, a 10 s single take (three windows), 4:3
+handheld night footage, a 2.29:1 cinemascope two-shot, and vertical footage widened back to 16:9 next to
+the real 16:9 it was cut from.
 
 Everything is decided per shot. You can see the decisions: `--debug-view` renders the
 cuts, boxes, crop window and invented bands over your edit.
@@ -61,8 +63,9 @@ openreframe my_edit.mp4 --reroll 7                   # shot 7 again, new seed, n
 openreframe my_edit.mp4 --crop-only 4                # shot 4 as a plain crop, nothing invented
 ```
 
-More: `--ratios`, `--size 720x1280` (more detail, more GPU time), `--captioner`, `--recaption`,
-`--seed`, `--steps`, `--redo split` (re-run a step and the ones after it).
+More: `--ratios`, `--size 720x1280` (more detail, more GPU time), `--window` (longest pass of the fill
+model, 121 frames by default; smaller needs less VRAM, `0` renders every shot whole), `--captioner`,
+`--recaption`, `--seed`, `--steps`, `--redo split` (re-run a step and the ones after it).
 
 ## On your own ComfyUI
 
@@ -100,9 +103,11 @@ Comfy Cloud for that step); on a small one, swap in a lighter fill workflow (nex
 ## Swap the model
 
 Every model call is a plain API-format workflow in [`openreframe/workflows/`](openreframe/workflows):
-`detect.json`, `look.json` and `fill_wan_vace.json`. The pipeline only touches named nodes
-(`load_video`, `pad`, `vace`, `positive`, `sampler`, `save`...), so you can replace the model behind
-them — a different outpainting model, a bigger captioner, other LoRAs — without touching the Python.
+`detect.json`, `look.json`, `fill_wan_vace.json` and `fill_wan_vace_continue.json` (the same fill, for
+the second and later windows of a long shot: it takes the previous window's last frames as known). The
+pipeline only touches named nodes (`load_video`, `pad`, `vace`, `positive`, `sampler`, `save`,
+`load_known`, `keep_rep`...), so you can replace the model behind them — a different outpainting model,
+a bigger captioner, other LoRAs — without touching the Python.
 
 ## An open stack
 
@@ -132,8 +137,10 @@ no license.
   plain crop (`--crop-only`).
 - **Two people in a wide frame.** Going vertical, a two-shot from cinemascope leaves one of them at
   the edge.
-- **Long shots.** v0.1 renders each shot in one window; Wan is at its best up to ~5 s. Longer shots
-  still work but can soften. Overlapping windows are next.
+- **Long shots.** Tested on one 10 s take: three windows, no visible seam where they meet, and 30 % less
+  GPU time than one long pass (179 s against 254 s). That single pass also hung a white parasol over the
+  DJ for the whole shot, while the windows kept the sky open; one test, not a rule. Each shot gets one
+  description, from its middle frame: a long shot that travels somewhere else keeps that one prompt.
 - **Hard cuts only.** Dissolves and flashes are not cuts.
 - **It reframes, it does not re-edit.** Shot order and timing are yours.
 

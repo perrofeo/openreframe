@@ -28,6 +28,34 @@ PROMPT_TAIL = " Cinematic film, natural light, fine grain."
 SKY_PHRASE = "Open sky continues above; nothing overhead."
 SKY_SHARE = 0.30
 
+# Wan is trained on short clips: past ~5 s in one pass the invented part softens and starts to wander.
+# Longer shots are rendered in overlapping windows; each one starts from the last frames of the one before
+# (given as known pixels), so it continues that invention instead of making up a new one.
+WINDOW = 121        # frames in one pass (5 s at 24 fps); shots up to this length are rendered whole
+OVERLAP = 17        # frames each window takes from the previous one: 1 + 4k, whole latents for Wan (4x in time)
+
+
+def length_4k1(n: int) -> int:
+    """Wan renders 4k+1 frames."""
+    return n + (-(n - 1)) % 4
+
+
+def windows(n: int, window: int = WINDOW, overlap: int = OVERLAP) -> list[tuple[int, int]]:
+    """(first frame, length) of each pass over a shot of n frames. Up to `window` frames, or window 0:
+    one pass. Longer: the fewest passes of equal length, each starting on the last `overlap` frames of
+    the one before."""
+    if not window or n <= window:
+        return [(0, length_4k1(n))]
+    window -= (window - 1) % 4                       # a 4k+1 cap, so rounding a length up never passes it
+    if window < overlap + 8:
+        raise ValueError(f"window must be at least {overlap + 8} frames")
+    k = -(-(n - overlap) // (window - overlap))
+    length = length_4k1(-(-(n - overlap) // k) + overlap)
+    step = length - overlap
+    out = [(j * step, length) for j in range(k - 1)]
+    last = (k - 1) * step
+    return out + [(last, length_4k1(n - last))]
+
 
 def sky_above(sky_png: str) -> bool:
     m = cv2.imread(sky_png, cv2.IMREAD_GRAYSCALE)

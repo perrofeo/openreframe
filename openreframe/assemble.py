@@ -31,6 +31,21 @@ def paste_back(ai_frames, real_frames, top: int, bottom: int) -> list[np.ndarray
     return out
 
 
+def stitch(passes: list[list[np.ndarray]], starts: list[int], overlap: int, n: int) -> list[np.ndarray]:
+    """Join the windows of a long shot. Each window began with the last `overlap` frames of the one
+    before as known pixels; across those frames the picture fades from the old window to the new one."""
+    out = list(passes[0])
+    for frames, start in zip(passes[1:], starts[1:]):
+        out = out[:start + overlap]
+        for i in range(overlap):
+            a = (i + 1) / (overlap + 1)
+            out[start + i] = cv2.addWeighted(out[start + i], 1 - a, frames[i], a, 0)
+        out += frames[overlap:]
+    if len(out) < n:
+        raise RuntimeError(f"stitched {len(out)} frames, expected {n}")
+    return out[:n]
+
+
 def window(out_h: int, win_h: int, top: int, crop_h: int, face_y: float | None) -> int:
     """Top row of a shorter (4:5, 1:1) window cut from the 9:16 frame: centred on the real pixels,
     moved if needed so the face stays inside with some headroom."""

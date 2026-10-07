@@ -55,7 +55,7 @@ def log(msg: str) -> None:
 
 class Run:
     def __init__(self, source: Path, out_dir: Path, target: str = "9:16", size=None, seed=6061003, ratios=None,
-                 api_key: str | None = None, logger=None, captioner: str | None = None):
+                 api_key: str | None = None, logger=None, captioner: str | None = None, window: int | None = None):
         self.source = source.resolve()
         self.out = out_dir.resolve()
         self.work = self.out / "work"
@@ -74,6 +74,8 @@ class Run:
         self._log = logger or log
         if captioner:
             self.state["captioner"] = captioner
+        if window is not None:
+            self.state["window"] = window
 
     # -- bookkeeping ---------------------------------------------------------------------------
     @property
@@ -242,55 +244,60 @@ class Run:
                            + fill.PROMPT_TAIL)
             self._log(f"  shot {k + 1:3d}: fill {s['top']}px {side[0]}, {s['bottom']}px {side[1]}")
 
-    # -- 5. outpaint every shot (Comfy, one job per shot) ----------------------------------------
+    # -- 5. outpaint every shot (Comfy: one job per shot, or one per window for a long shot) -------
     def fill(self):
         out_w, out_h = self.state["out"]["w"], self.state["out"]["h"]
         base = comfy.template("fill_wan_vace.json")
-        digest = hashlib.sha1(f"{self.source}:{self.source.stat().st_size}".encode()).hexdigest()[:12]
-        pending = []
+        cont = comfy.template("fill_wan_vace_continue.json")
+        self._digest = hashlib.sha1(f"{self.source}:{self.source.stat().st_size}".encode()).hexdigest()[:12]
+        window = self.state.get("window", fill.WINDOW)
+        jobs = {}                                            # shot -> (window, job)
         for k, s in enumerate(self.state["shots"]):
-            # the key covers everything that defines a shot's render, so a result is reused only when
-            # nothing changed, a changed note re-renders just that shot, and nothing is paid twice
-            spec = json.dumps([s["prompt"], s["top"], s["bottom"], s["length"], self.shot_seed(k),
-                               s["crop_w"], s["x0"], out_w, out_h, base] + (["widen"] if self.widen else []),
-                              sort_keys=True)
-            key = f"openreframe-{digest}-{k:03d}-{hashlib.sha1(spec.encode()).hexdigest()[:16]}"
+            passes = fill.windows(s["n"], window)
+            key = self.fill_key(k, passes, base, cont)
             if s.get("fill_key") == key and (self.shot_dir(k) / "fill.mp4").exists():
                 continue
             if s["top"] + s["bottom"] == 0:           # nothing to invent (e.g. already vertical): no GPU, no cost
                 shutil.copy(self.shot_dir(k) / "crop.mp4", self.shot_dir(k) / "fill.mp4")
                 s["fill_key"] = key
                 continue
-            if s.get("job_key") != key or not s.get("job_id"):
-                wf = comfy.build(self.c, base, {
-                    ("load_video", "file"): self.shot_dir(k) / "crop.mp4",
-                    **({("pad", "left"): s["top"], ("pad", "right"): s["bottom"]} if self.widen
-                       else {("pad", "top"): s["top"], ("pad", "bottom"): s["bottom"]}),
-                    ("mask_rep", "amount"): s["length"],
-                    ("vace", "width"): out_w, ("vace", "height"): out_h, ("vace", "length"): s["length"],
-                    ("positive", "text"): s["prompt"],
-                    ("sampler", "seed"): self.shot_seed(k),
-                    ("save", "filename_prefix"): f"openreframe/{digest}_{k:03d}"})
-                s["job_id"], s["job_key"] = self.c.submit(wf, idempotency_key=key).id, key
-                self.save()
-            pending.append(k)
-        self._log(f"  {len(pending)} shots to render, {len(self.state['shots']) - len(pending)} reused")
+            if s.get("job_key") != key or "passes" not in s:
+                old = s.get("job_id") if s.get("job_key") == key and len(passes) == 1 else None
+                s["job_key"] = key
+                s["passes"] = [{"start": a, "length": n, **({"job_id": old} if old else {})} for a, n in passes]
+            many = len(s["passes"]) > 1
+            todo = [j for j, q in enumerate(s["passes"])
+                    if not (q.get("done") and (self.shot_dir(k) / (f"fill_w{j}.mp4" if many else "fill.mp4")).exists())]
+            if not todo:                              # every window is back; only the join was missing
+                self._stitch(k)
+                s["fill_key"] = key
+                continue
+            jobs[k] = (todo[0], self._pass_job(k, todo[0], base, cont))
+        self._log(f"  {len(jobs)} shots to render, {len(self.state['shots']) - len(jobs)} reused")
         # poll every job and report the queue, so a run waiting for a free GPU never looks frozen;
-        # download each shot as soon as it is done, in whatever order they finish
-        jobs = {k: self.c.jobs.get(self.state["shots"][k]["job_id"]) for k in pending}
+        # download each one as soon as it is done, in whatever order they finish; a long shot sends
+        # its next window when the one before is back
         last = None
         while jobs:
             counts = {"waiting": 0, "running": 0}
-            for k, job in list(jobs.items()):
+            for k, (j, job) in list(jobs.items()):
                 job.refresh()
                 st = str(job.status).lower()
                 if any(w in st for w in ("succeed", "complete", "success")):
                     s = self.state["shots"][k]
-                    comfy.download(job, "save", self.shot_dir(k) / "fill.mp4")
-                    s["fill_key"] = s["job_key"]
+                    many = len(s["passes"]) > 1
+                    comfy.download(job, "save", self.shot_dir(k) / (f"fill_w{j}.mp4" if many else "fill.mp4"))
+                    s["passes"][j]["done"] = True
+                    if j + 1 < len(s["passes"]):
+                        jobs[k] = (j + 1, self._pass_job(k, j + 1, base, cont))
+                        self._log(f"  shot {k + 1:3d} window {j + 1}/{len(s['passes'])} ready")
+                    else:
+                        if many:
+                            self._stitch(k)
+                        s["fill_key"] = s["job_key"]
+                        del jobs[k]
+                        self._log(f"  shot {k + 1:3d} ready")
                     self.save()
-                    del jobs[k]
-                    self._log(f"  shot {k + 1:3d} ready")
                 elif any(w in st for w in ("fail", "error", "cancel")):
                     job.result()                          # raises with the per-node detail
                 elif "run" in st or "progress" in st:
@@ -302,6 +309,72 @@ class Run:
                 last = counts
             if jobs:
                 time.sleep(10)
+
+    def fill_key(self, k: int, passes: list, base: dict, cont: dict) -> str:
+        """The key covers everything that defines a shot's render, so a result is reused only when nothing
+        changed, a changed note re-renders just that shot, and nothing is paid twice."""
+        s = self.state["shots"][k]
+        out_w, out_h = self.state["out"]["w"], self.state["out"]["h"]
+        spec = [s["prompt"], s["top"], s["bottom"], s["length"], self.shot_seed(k),
+                s["crop_w"], s["x0"], out_w, out_h, base] + (["widen"] if self.widen else [])
+        if len(passes) > 1:
+            spec += [passes, fill.OVERLAP, cont]
+        digest = hashlib.sha1(f"{self.source}:{self.source.stat().st_size}".encode()).hexdigest()[:12]
+        return f"openreframe-{digest}-{k:03d}-{hashlib.sha1(json.dumps(spec, sort_keys=True).encode()).hexdigest()[:16]}"
+
+    def _pass_job(self, k: int, j: int, base: dict, cont: dict):
+        """The Comfy job for window j of shot k: the one already sent, or a new one. Window 0 (and a short
+        shot's only window) fills the cropped frames; a later window starts from the last frames of the
+        one before, real pixels pasted back, which the model keeps as they are and continues."""
+        s, d = self.state["shots"][k], self.shot_dir(k)
+        q = s["passes"][j]
+        if q.get("job_id"):
+            return self.c.jobs.get(q["job_id"])
+        out_w, out_h = self.state["out"]["w"], self.state["out"]["h"]
+        many = len(s["passes"]) > 1
+        inputs = {**({("pad", "left"): s["top"], ("pad", "right"): s["bottom"]} if self.widen
+                     else {("pad", "top"): s["top"], ("pad", "bottom"): s["bottom"]}),
+                  ("vace", "width"): out_w, ("vace", "height"): out_h, ("vace", "length"): q["length"],
+                  ("positive", "text"): s["prompt"],
+                  ("sampler", "seed"): self.shot_seed(k),
+                  ("save", "filename_prefix"): f"openreframe/{self._digest}_{k:03d}" + (f"_w{j}" if many else "")}
+        if not many:
+            graph, key = base, s["job_key"]
+            inputs.update({("load_video", "file"): d / "crop.mp4", ("mask_rep", "amount"): s["length"]})
+        else:
+            fps = self.state["probe"]["fps"]
+            crop = video.read_mp4(d / "crop.mp4")
+            known = fill.OVERLAP if j else 0
+            new = crop[q["start"] + known:q["start"] + q["length"]]
+            new += [new[-1]] * (q["length"] - known - len(new))
+            clip = d / f"crop_w{j}.mp4"
+            video.write_mp4(new, clip, fps, crf=10)
+            inputs.update({("load_video", "file"): clip, ("mask_rep", "amount"): len(new)})
+            files, graph = [clip], base
+            if j:
+                prev = s["passes"][j - 1]
+                o = q["start"] - prev["start"]
+                ai = video.read_mp4(d / f"fill_w{j - 1}.mp4", prev["length"])[o:o + known]
+                real = crop[q["start"]:q["start"] + known]
+                kept = assemble.paste_back([canon(f, self.widen) for f in ai], [canon(f, self.widen) for f in real],
+                                           s["top"], s["bottom"])
+                kclip = d / f"known_w{j}.mp4"
+                video.write_mp4([canon(f, self.widen) for f in kept], kclip, fps, crf=10)
+                inputs.update({("load_known", "file"): kclip, ("keep", "width"): out_w, ("keep", "height"): out_h,
+                               ("keep_rep", "amount"): known})
+                files.append(kclip)
+                graph = cont
+            # what a window renders depends on the window before it: its key covers the files it is given
+            key = f"{s['job_key']}-w{j}-{hashlib.sha1(b''.join(f.read_bytes() for f in files)).hexdigest()[:12]}"
+        q["job_id"] = self.c.submit(comfy.build(self.c, graph, inputs), idempotency_key=key).id
+        self.save()
+        return self.c.jobs.get(q["job_id"])
+
+    def _stitch(self, k: int):
+        s, d = self.state["shots"][k], self.shot_dir(k)
+        parts = [video.read_mp4(d / f"fill_w{j}.mp4", q["length"]) for j, q in enumerate(s["passes"])]
+        frames = assemble.stitch(parts, [q["start"] for q in s["passes"]], fill.OVERLAP, s["n"])
+        video.write_mp4(frames, d / "fill.mp4", self.state["probe"]["fps"], crf=10)
 
     # -- 6. paste back, join, audio, other ratios (local) ---------------------------------------------
     def assemble(self):

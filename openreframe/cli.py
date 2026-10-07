@@ -28,6 +28,9 @@ def main(argv=None):
     ap.add_argument("--recaption", action="store_true", help="describe every shot again (otherwise captions are kept)")
     ap.add_argument("--captioner", help="Qwen-VL model for the shot descriptions (default Qwen3-VL-4B-Instruct; "
                                         "Qwen3-VL-2B-Instruct for GPUs with 8 GB)")
+    ap.add_argument("--window", type=int, metavar="FRAMES",
+                    help="longest pass the fill model renders (default 121, 5 s at 24 fps); longer shots go in "
+                         "overlapping windows. Smaller saves VRAM on a local GPU; 0 renders every shot whole")
     ap.add_argument("--note", action="append", default=[], metavar='N="TEXT"',
                     help='add something the model cannot know to shot N\'s prompt, e.g. 2="His car is black."')
     a = ap.parse_args(argv)
@@ -46,7 +49,7 @@ def main(argv=None):
     if a.ratios:
         ratios = (a.to,) + tuple(r.strip() for r in a.ratios.split(",") if r.strip() != a.to)
     run = Run(a.input, a.out or a.input.with_name(f"{a.input.stem}_openreframe"), target=a.to, size=size,
-              seed=a.seed, ratios=ratios, captioner=a.captioner)
+              seed=a.seed, ratios=ratios, captioner=a.captioner, window=a.window)
     if a.crop_only:
         co = run.state.setdefault("crop_only", [])
         co += [str(int(n)) for n in a.crop_only if str(int(n)) not in co]
