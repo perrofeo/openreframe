@@ -55,7 +55,7 @@ def _reframe(video_path, api_key, ratios, captioner):
 
     def job():
         try:
-            run = Run(local, work / "out", ratios=tuple(ratios), api_key=api_key.strip(),
+            run = Run(local, work / "out", target="9:16", ratios=tuple(ratios), api_key=api_key.strip(),
                       logger=lines.append, captioner=captioner)
             run.run()
             result["ok"] = True

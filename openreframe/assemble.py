@@ -80,48 +80,56 @@ def ai_frames_of(path: Path, n: int):
     return frames
 
 
-def debug_view(source: Path, vertical: Path, dest: Path, shots: list, boxes: list, out_w: int, out_h: int,
-               fps: float, has_audio: bool, subjects: set) -> None:
+def debug_view(source: Path, output: Path, dest: Path, shots: list, boxes: list, out_w: int, out_h: int,
+               fps: float, has_audio: bool, subjects: set, widen: bool = False) -> None:
     """The edit with what the tool decided (cuts, boxes, face, crop window, how much is invented) next to
-    the vertical result with its seams dashed and the invented bands labelled."""
+    the result with its seams dashed and the invented bands labelled. Shapes are drawn in the working
+    orientation (crop across x, invent along y) and turned back; text is written last, upright."""
+    T = (lambda img: img.transpose(1, 0, 2).copy()) if widen else (lambda img: img)
     src = cv2.VideoCapture(str(source))
-    ver = cv2.VideoCapture(str(vertical))
+    res = cv2.VideoCapture(str(output))
     font = cv2.FONT_HERSHEY_DUPLEX
     silent = dest.with_name(dest.stem + "_silent.mp4")
     writer = None
+    cw, ch = (out_h, out_w) if widen else (out_w, out_h)
     for k, s in enumerate(shots):
-        cw, ch, top, bottom = s["crop_w"], s["crop_h"], s["top"], s["bottom"]
+        crop_w, crop_h, top, bottom = s["crop_w"], s["crop_h"], s["top"], s["bottom"]
         for i in range(s["n"]):
             ok, f = src.read()
-            ok2, v = ver.read()
+            ok2, v = res.read()
             if not (ok and ok2):
                 raise RuntimeError("debug view: ran out of frames")
             H, W = f.shape[:2]
-            x0 = int(round(s["x0"][i]))
-            f[:, :x0] = (f[:, :x0] * 0.35).astype(np.uint8)
-            f[:, x0 + cw:] = (f[:, x0 + cw:] * 0.35).astype(np.uint8)
             for b in boxes[s["start"] + i]:
                 if b["label"] in subjects and b["score"] >= 0.4 and b["width"] * b["height"] <= 0.5 * W * H:
                     p0 = (int(b["x"]), int(b["y"]))
                     p1 = (int(b["x"] + b["width"]), int(b["y"] + b["height"]))
                     cv2.rectangle(f, p0, p1, (80, 220, 80), 2)
                     cv2.putText(f, b["label"], (p0[0] + 4, p0[1] + 22), font, 0.7, (80, 220, 80), 2)
+            c = T(f)                                   # working orientation
+            x0 = int(round(s["x0"][i]))
+            c[:, :x0] = (c[:, :x0] * 0.35).astype(np.uint8)
+            c[:, x0 + crop_w:] = (c[:, x0 + crop_w:] * 0.35).astype(np.uint8)
             face = s["faces"][i] if s["has_face"] else None
             if face:
-                cv2.rectangle(f, (face[0], face[1]), (face[2], face[3]), (0, 210, 255), 2)
-            cv2.rectangle(f, (x0, 1), (x0 + cw - 1, H - 2), (255, 255, 255), 3)
+                cv2.rectangle(c, (face[0], face[1]), (face[2], face[3]), (0, 210, 255), 2)
+            cv2.rectangle(c, (x0, 1), (x0 + crop_w - 1, c.shape[0] - 2), (255, 255, 255), 3)
+            f = T(c)
             if i < 8:
                 cv2.putText(f, f"CUT {k + 1}/{len(shots)}", (24, 56), font, 1.5, (0, 0, 255), 3)
-            cv2.putText(f, f"crop {cw / H:.2f}:1  |  AI fills {1 - ch / out_h:.0%}  (top {top}px, bottom {bottom}px)",
-                        (24, H - 24), font, 0.8, (255, 255, 255), 2)
+            cv2.putText(f, f"crop {crop_w / c.shape[0]:.2f}:1  |  AI fills {1 - crop_h / ch:.0%}", (24, H - 24),
+                        font, 0.8, (255, 255, 255), 2)
             left = cv2.resize(f, (int(round(W * out_h / H / 2)) * 2, out_h), interpolation=cv2.INTER_AREA)
-            for y in ([top] if top else []) + ([top + ch] if bottom else []):
-                for xx in range(0, out_w, 16):
-                    cv2.line(v, (xx, y), (min(xx + 8, out_w - 1), y), (255, 255, 255), 1)
+            vc = T(v)
+            for y in ([top] if top else []) + ([top + crop_h] if bottom else []):
+                for xx in range(0, cw, 16):
+                    cv2.line(vc, (xx, y), (min(xx + 8, cw - 1), y), (255, 255, 255), 1)
+            v = T(vc)
             if top > 40:
                 cv2.putText(v, "AI", (12, 32), font, 0.8, (255, 255, 255), 2)
             if bottom > 40:
-                cv2.putText(v, "AI", (12, out_h - 14), font, 0.8, (255, 255, 255), 2)
+                at = (out_w - 52, 32) if widen else (12, out_h - 14)
+                cv2.putText(v, "AI", at, font, 0.8, (255, 255, 255), 2)
             frame = np.hstack([left, v])
             if writer is None:
                 writer = Writer(silent, frame.shape[1], frame.shape[0], fps)

@@ -15,7 +15,33 @@ from . import assemble, comfy, fill, framing, video
 
 STEPS = ("detect", "analyze", "look", "split", "fill", "assemble")
 EXTRA = ("debug",)                                   # only when asked for
-RATIOS = {"9:16": None, "4:5": 5 / 4, "1:1": 1.0}   # height / width of the shorter cuts
+DEFAULT_RATIOS = {"9:16": ("9:16", "4:5", "1:1"), "16:9": ("16:9", "4:3", "1:1")}
+
+
+def parse_ratio(r: str) -> float:
+    w, h = (float(x) for x in r.split(":"))
+    return w / h
+
+
+def base_size(target: str) -> tuple[int, int]:
+    """Render size for the target ratio: long side 960, both sides multiples of 16."""
+    a = parse_ratio(target)
+    if abs(a - 1) < 1e-6:
+        return 720, 720
+    long_, short = 960, int(round(960 * min(a, 1 / a) / 16)) * 16
+    return (short, long_) if a < 1 else (long_, short)
+
+
+def canon(img, widen: bool):
+    """The tool always works as if it cropped across x and invented along y (horizontal -> vertical).
+    Going vertical -> horizontal is the same problem turned 90 degrees."""
+    return img.transpose(1, 0, *range(2, img.ndim)).copy() if widen else img
+
+
+def canon_boxes(frames: list, widen: bool) -> list:
+    if not widen:
+        return frames
+    return [[dict(b, x=b["y"], y=b["x"], width=b["height"], height=b["width"]) for b in f] for f in frames]
 
 
 def log(msg: str) -> None:
@@ -23,7 +49,7 @@ def log(msg: str) -> None:
 
 
 class Run:
-    def __init__(self, source: Path, out_dir: Path, size=(544, 960), seed=6061003, ratios=("9:16", "4:5", "1:1"),
+    def __init__(self, source: Path, out_dir: Path, target: str = "9:16", size=None, seed=6061003, ratios=None,
                  api_key: str | None = None, logger=None, captioner: str | None = None):
         self.source = source.resolve()
         self.out = out_dir.resolve()
@@ -32,10 +58,12 @@ class Run:
         self.state_path = self.work / "plan.json"
         self.state = json.loads(self.state_path.read_text()) if self.state_path.exists() else {}
         self.state.setdefault("source", str(self.source))
-        self.state.setdefault("out", {"w": size[0], "h": size[1]})
+        self.state.setdefault("target", target)
+        w, h = size or base_size(self.state["target"])
+        self.state.setdefault("out", {"w": w, "h": h})
         self.state.setdefault("seed", seed)
         self.state.setdefault("done", [])
-        self.ratios = ratios
+        self.ratios = tuple(ratios) if ratios else DEFAULT_RATIOS.get(self.state["target"], (self.state["target"],))
         self._client = None
         self._api_key = api_key
         self._log = logger or log
@@ -51,6 +79,15 @@ class Run:
 
     def save(self):
         self.state_path.write_text(json.dumps(self.state, indent=1, ensure_ascii=False))
+
+    @property
+    def widen(self) -> bool:
+        return bool(self.state.get("widen", False))
+
+    def canon_out(self) -> tuple[int, int]:
+        """Output size in the working orientation (crop across x, invent along y)."""
+        w, h = self.state["out"]["w"], self.state["out"]["h"]
+        return (h, w) if self.widen else (w, h)
 
     def shot_seed(self, k: int) -> int:
         """Each shot has its own seed; --reroll N moves shot N to a new one."""
@@ -93,6 +130,9 @@ class Run:
     def detect(self):
         info = video.probe(self.source)
         self.state["probe"] = info
+        self.state["widen"] = info["width"] / info["height"] < parse_ratio(self.state["target"])
+        self._log(f"  {'widening' if self.widen else 'narrowing'} to {self.state['target']} "
+                  f"({self.state['out']['w']}x{self.state['out']['h']})")
         shots = video.detect_cuts(self.source, info["fps"], info["frames"])
         self.state["shots"] = [{"start": a, "n": n} for a, n in shots]
         self._log(f"  {info['width']}x{info['height']} @ {info['fps']:.3f} fps, {info['frames']} frames, {len(shots)} shots")
@@ -115,25 +155,28 @@ class Run:
 
     # -- 2. framing (local) ---------------------------------------------------------------------
     def analyze(self):
-        boxes = json.loads((self.work / "boxes.json").read_text())
-        faces = json.loads((self.work / "faces.json").read_text())
-        out_w, out_h, fps = self.state["out"]["w"], self.state["out"]["h"], self.state["probe"]["fps"]
+        boxes = canon_boxes(json.loads((self.work / "boxes.json").read_text()), self.widen)
+        faces = canon_boxes(json.loads((self.work / "faces.json").read_text()), self.widen)
+        cw, ch = self.canon_out()
+        fps = self.state["probe"]["fps"]
         shots = self.state["shots"]
         for k, frames in video.read_shots(self.source, [(s["start"], s["n"]) for s in shots]):
             s = shots[k]
             a, n = s["start"], len(frames)
             s["n"] = n
+            frames = [canon(f, self.widen) for f in frames]
             only = str(k + 1) in self.state.get("crop_only", [])
-            s.update(framing.plan_shot(frames, boxes[a:a + n], faces[a:a + n], out_w, out_h, crop_only=only))
-            crops = framing.crop_frames(frames, s["x0"], s["crop_w"], out_w, s["crop_h"])
+            s.update(framing.plan_shot(frames, boxes[a:a + n], faces[a:a + n], cw, ch, crop_only=only,
+                                       keep_most=self.widen))
+            crops = [canon(c, self.widen) for c in framing.crop_frames(frames, s["x0"], s["crop_w"], cw, s["crop_h"])]
             s["length"] = n + (-(n - 1)) % 4                  # Wan wants 4k+1 frames: repeat the last one
             crops += [crops[-1]] * (s["length"] - n)
             d = self.shot_dir(k)
             video.write_mp4(crops, d / "crop.mp4", fps, crf=10)
             cv2.imwrite(str(d / "middle.png"), crops[n // 2])
             self._log(f"  shot {k + 1:3d}: {n:4d} fr  crop {s['crop_w']}px ({s['crop_w'] / frames[0].shape[0]:.2f}:1)"
-                f"  AI fills {1 - s['crop_h'] / out_h:.0%}  {'face' if s['has_face'] else 'subjects/motion'}"
-                f"{'  (crop only)' if only else ''}")
+                      f"  AI fills {1 - s['crop_h'] / ch:.0%}  {'face' if s['has_face'] else 'subjects/motion'}"
+                      f"{'  (crop only)' if only else ''}")
 
     # -- 3. depth + caption per shot (Comfy, one job) ---------------------------------------------
     LOOK_PARTS = {"depth": (("depth_run", "depth", "save_depth"), "save_depth", "depth.png"),
@@ -180,18 +223,19 @@ class Run:
 
     # -- 4. where to fill (local) ---------------------------------------------------------------
     def split(self):
-        out_h = self.state["out"]["h"]
+        cw, ch = self.canon_out()
         shots = self.state["shots"]
         captions = fill.coherent_time_of_day([s.get("caption", "") for s in shots])
+        side = ("left", "right") if self.widen else ("above", "below")
         for k, (s, cap) in enumerate(zip(shots, captions)):
-            s.update(fill.split(str(self.shot_dir(k) / "depth.png"), out_h - s["crop_h"], out_h, s["crop_h"],
-                                s["face_y_max"]))
+            depth = canon(cv2.imread(str(self.shot_dir(k) / "depth.png"), cv2.IMREAD_GRAYSCALE), self.widen)
+            s.update(fill.split(depth, ch - s["crop_h"], ch, s["crop_h"], s["face_y_max"], safe_zone=not self.widen))
             note = self.state.get("notes", {}).get(str(k + 1), "")
-            sky = fill.sky_above(str(self.shot_dir(k) / "sky.png")) if s["top"] else False
+            sky = (not self.widen and s["top"] > 0 and fill.sky_above(str(self.shot_dir(k) / "sky.png")))
             s["sky_above"] = sky
             s["prompt"] = (cap + (" " + fill.SKY_PHRASE if sky else "") + (" " + note if note else "")
                            + fill.PROMPT_TAIL)
-            self._log(f"  shot {k + 1:3d}: fill {s['top']}px above, {s['bottom']}px below")
+            self._log(f"  shot {k + 1:3d}: fill {s['top']}px {side[0]}, {s['bottom']}px {side[1]}")
 
     # -- 5. outpaint every shot (Comfy, one job per shot) ----------------------------------------
     def fill(self):
@@ -203,7 +247,8 @@ class Run:
             # the key covers everything that defines a shot's render, so a result is reused only when
             # nothing changed, a changed note re-renders just that shot, and nothing is paid twice
             spec = json.dumps([s["prompt"], s["top"], s["bottom"], s["length"], self.shot_seed(k),
-                               s["crop_w"], s["x0"], out_w, out_h, base], sort_keys=True)
+                               s["crop_w"], s["x0"], out_w, out_h, base] + (["widen"] if self.widen else []),
+                              sort_keys=True)
             key = f"openreframe-{digest}-{k:03d}-{hashlib.sha1(spec.encode()).hexdigest()[:16]}"
             if s.get("fill_key") == key and (self.shot_dir(k) / "fill.mp4").exists():
                 continue
@@ -214,7 +259,8 @@ class Run:
             if s.get("job_key") != key or not s.get("job_id"):
                 wf = comfy.build(self.c, base, {
                     ("load_video", "file"): self.shot_dir(k) / "crop.mp4",
-                    ("pad", "top"): s["top"], ("pad", "bottom"): s["bottom"],
+                    **({("pad", "left"): s["top"], ("pad", "right"): s["bottom"]} if self.widen
+                       else {("pad", "top"): s["top"], ("pad", "bottom"): s["bottom"]}),
                     ("mask_rep", "amount"): s["length"],
                     ("vace", "width"): out_w, ("vace", "height"): out_h, ("vace", "length"): s["length"],
                     ("positive", "text"): s["prompt"],
@@ -254,43 +300,44 @@ class Run:
 
     # -- 6. paste back, join, audio, other ratios (local) ---------------------------------------------
     def assemble(self):
-        out_w, out_h, fps = self.state["out"]["w"], self.state["out"]["h"], self.state["probe"]["fps"]
+        cw, ch = self.canon_out()
+        fps = self.state["probe"]["fps"]
         name = self.source.stem
+        target = self.state["target"]
         writers = {}
         for r in self.ratios:
-            h = out_h if RATIOS[r] is None else int(round(out_w * RATIOS[r] / 2)) * 2
-            writers[r] = (assemble.Writer(self.work / f"{name}_{r.replace(':', 'x')}_silent.mp4", out_w, h, fps), h)
+            a = parse_ratio(r)
+            a_c = 1 / a if self.widen else a             # width/height in the working orientation
+            win = ch if r == target else min(ch, int(round(cw / a_c / 2)) * 2)
+            size = (win, cw) if self.widen else (cw, win)
+            writers[r] = (assemble.Writer(self.work / f"{name}_{r.replace(':', 'x')}_silent.mp4", *size, fps), win)
         shots = self.state["shots"]
         for k, frames in video.read_shots(self.source, [(s["start"], s["n"]) for s in shots]):
             s = shots[k]
-            real = framing.crop_frames(frames, s["x0"], s["crop_w"], out_w, s["crop_h"])
-            ai = assemble.ai_frames_of(self.shot_dir(k) / "fill.mp4", s["n"])
+            real = framing.crop_frames([canon(f, self.widen) for f in frames], s["x0"], s["crop_w"], cw, s["crop_h"])
+            ai = [canon(f, self.widen) for f in assemble.ai_frames_of(self.shot_dir(k) / "fill.mp4", s["n"])]
             done = assemble.paste_back(ai, real, s["top"], s["bottom"])
-            for r, (w, h) in writers.items():
-                if RATIOS[r] is None:
-                    for f in done:
-                        w.write(f)
-                    continue
-                fy = s["face_y_max"]
-                y = assemble.window(out_h, h, s["top"], s["crop_h"], fy)
+            for r, (w, win) in writers.items():
+                y = 0 if win == ch else assemble.window(ch, win, s["top"], s["crop_h"],
+                                                        None if self.widen else s["face_y_max"])
                 for f in done:
-                    w.write(f[y:y + h])
+                    w.write(canon(f[y:y + win], self.widen))
         for r, (w, _) in writers.items():
             w.close()
             final = self.out / f"{name}_{r.replace(':', 'x')}.mp4"
             assemble.add_audio(w.path, self.source, final, self.state["probe"]["audio"])
             self._log(f"  {final}")
-        if "9:16" in self.ratios:
-            cmp_ = self.out / f"{name}_compare.mp4"
-            assemble.side_by_side(self.source, self.out / f"{name}_9x16.mp4", cmp_, out_h)
-            self._log(f"  {cmp_}")
+        cmp_ = self.out / f"{name}_compare.mp4"
+        assemble.side_by_side(self.source, self.out / f"{name}_{target.replace(':', 'x')}.mp4", cmp_,
+                              self.state["out"]["h"])
+        self._log(f"  {cmp_}")
 
     # -- optional: the decisions drawn over the edit ----------------------------------------------
     def debug(self):
         name = self.source.stem
         dest = self.out / f"{name}_debug.mp4"
-        assemble.debug_view(self.source, self.out / f"{name}_9x16.mp4", dest, self.state["shots"],
-                            json.loads((self.work / "boxes.json").read_text()), self.state["out"]["w"],
-                            self.state["out"]["h"], self.state["probe"]["fps"], self.state["probe"]["audio"],
-                            framing.SUBJECTS)
+        assemble.debug_view(self.source, self.out / f"{name}_{self.state['target'].replace(':', 'x')}.mp4", dest,
+                            self.state["shots"], json.loads((self.work / "boxes.json").read_text()),
+                            self.state["out"]["w"], self.state["out"]["h"], self.state["probe"]["fps"],
+                            self.state["probe"]["audio"], framing.SUBJECTS, widen=self.widen)
         self._log(f"  {dest}")

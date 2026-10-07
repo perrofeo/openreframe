@@ -32,10 +32,12 @@ def motion_profile(frames: list[np.ndarray]) -> np.ndarray:
     return np.maximum(mov - np.median(mov, axis=1, keepdims=True), 0)   # drop uniform (camera) motion
 
 
-def plan_shot(frames, boxes, faces, out_w: int, out_h: int, crop_only: bool = False) -> dict:
+def plan_shot(frames, boxes, faces, out_w: int, out_h: int, crop_only: bool = False, keep_most: bool = False) -> dict:
     """boxes/faces: per frame, lists of {x, y, width, height, label, score} in source pixels.
     crop_only: the director's call for a shot the model cannot extend well: a plain crop at the target
-    ratio, still following who matters, with nothing invented."""
+    ratio, still following who matters, with nothing invented.
+    keep_most: when widening (vertical -> horizontal) the narrowest crop turns the shot into a zoomed-in
+    close-up and loses the hands and the table; there the widest candidate wins and the sides are invented."""
     n = len(frames)
     H, W = frames[0].shape[:2]
     mov = motion_profile(frames)
@@ -71,7 +73,7 @@ def plan_shot(frames, boxes, faces, out_w: int, out_h: int, crop_only: bool = Fa
     interest = np.stack([interest[max(0, i - 6):i + 7].mean(axis=0) for i in range(n)])   # boxes flicker
 
     crop_w = None
-    for r in CROP_RATIOS:
+    for r in (reversed(CROP_RATIOS) if keep_most else CROP_RATIOS):
         w = min(W, _even(H * r))
         held = []
         for i in range(n):

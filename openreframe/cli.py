@@ -1,4 +1,4 @@
-"""openreframe INPUT.mp4 [-o OUT] — reframe a finished 16:9 edit to 9:16, 4:5 and 1:1, shot by shot."""
+"""openreframe INPUT.mp4 [-o OUT] [--to 9:16|16:9|...] — reframe a finished edit to another ratio, shot by shot."""
 from __future__ import annotations
 
 import argparse
@@ -12,8 +12,9 @@ def main(argv=None):
     ap = argparse.ArgumentParser(prog="openreframe", description=__doc__)
     ap.add_argument("input", type=Path, help="horizontal video (a finished edit, with cuts and sound)")
     ap.add_argument("-o", "--out", type=Path, help="output folder (default: <input name>_openreframe)")
-    ap.add_argument("--ratios", default="9:16,4:5,1:1", help="comma-separated, from 9:16, 4:5, 1:1")
-    ap.add_argument("--size", default="544x960", help="9:16 render size, multiples of 16 (720x1280 for more detail)")
+    ap.add_argument("--to", default="9:16", help="target ratio: 9:16 (default), 16:9, 4:5, 1:1, 4:3...")
+    ap.add_argument("--ratios", help="extra cuts from the same render (default: 4:5,1:1 for 9:16; 4:3,1:1 for 16:9)")
+    ap.add_argument("--size", help="render size WxH, multiples of 16 (default: long side 960)")
     ap.add_argument("--seed", type=int, default=6061003)
     ap.add_argument("--steps", default=",".join(STEPS), help=f"run only some steps: {','.join(STEPS)}")
     ap.add_argument("--redo", default="", help="run this step again, and every step after it")
@@ -30,11 +31,16 @@ def main(argv=None):
     a = ap.parse_args(argv)
     if not a.input.exists():
         sys.exit(f"{a.input}: not found")
-    w, h = (int(x) for x in a.size.lower().split("x"))
-    if w % 16 or h % 16:
-        sys.exit("--size must be multiples of 16")
-    run = Run(a.input, a.out or a.input.with_name(f"{a.input.stem}_openreframe"), size=(w, h), seed=a.seed,
-              ratios=tuple(r.strip() for r in a.ratios.split(",")), captioner=a.captioner)
+    size = None
+    if a.size:
+        size = tuple(int(x) for x in a.size.lower().split("x"))
+        if size[0] % 16 or size[1] % 16:
+            sys.exit("--size must be multiples of 16")
+    ratios = None
+    if a.ratios:
+        ratios = (a.to,) + tuple(r.strip() for r in a.ratios.split(",") if r.strip() != a.to)
+    run = Run(a.input, a.out or a.input.with_name(f"{a.input.stem}_openreframe"), target=a.to, size=size,
+              seed=a.seed, ratios=ratios, captioner=a.captioner)
     if a.crop_only:
         co = run.state.setdefault("crop_only", [])
         co += [str(int(n)) for n in a.crop_only if str(int(n)) not in co]

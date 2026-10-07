@@ -37,16 +37,23 @@ def sky_above(sky_png: str) -> bool:
     return float(m[:band].astype(np.float32).mean() / 255) >= SKY_SHARE
 
 
-def split(depth_png: str, total: int, out_h: int, crop_h: int, face_y_max: float | None) -> dict:
-    """Pixels to fill above and below. Bright = near in the Depth Anything render."""
-    d = cv2.imread(depth_png, cv2.IMREAD_GRAYSCALE).astype(np.float32) / 255
+def split(depth, total: int, out_h: int, crop_h: int, face_y_max: float | None, safe_zone: bool = True) -> dict:
+    """Pixels to fill before and after the real image along the fill axis (above/below for a vertical
+    target). `depth` is the Depth Anything render (bright = near) already in that orientation.
+    safe_zone: the platform rules (face high, real image not too low) only apply to vertical targets."""
+    d = depth.astype(np.float32) / 255 if depth.dtype != np.float32 else depth
     band = max(4, int(0.08 * d.shape[0]))
     near_top, near_bottom = float(d[:band].mean()), float(d[-band:].mean())
     top = int(round(total * float(np.clip(0.5 + 2.0 * (near_bottom - near_top), 0, 1))))
-    face_cap = max(0, int(FACE_MAX * out_h - face_y_max)) if face_y_max is not None else total
-    top = min(top, face_cap, max(0, int(CENTER_MAX * out_h - crop_h / 2)))
+    face_cap = total
+    if safe_zone:
+        if face_y_max is not None:
+            face_cap = max(0, int(FACE_MAX * out_h - face_y_max))
+        top = min(top, face_cap, max(0, int(CENTER_MAX * out_h - crop_h / 2)))
     if 0 < total - top < MIN_BAND and face_cap >= total:
         top = total                 # a thin strip under the foreground only invents what is under it
+    if 0 < top < MIN_BAND and not safe_zone:
+        top = 0
     top -= top % 2
     return {"near_top": round(near_top, 3), "near_bottom": round(near_bottom, 3), "top": top, "bottom": total - top}
 
