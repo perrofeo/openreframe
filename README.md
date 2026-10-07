@@ -3,7 +3,9 @@
 **Reframe a finished edit to another aspect ratio — 16:9 to 9:16, 4:5 and 1:1, or vertical to 16:9 —
 shot by shot, with open models on ComfyUI.**
 
-<!-- docs/compare.gif: the original edit on the left, the vertical version on the right -->
+![A 16:9 car chase on the left, openreframe's 9:16 version on the right: each shot cropped and extended on its own](docs/hero.webp)
+
+*Five shots of a 24-shot AI-made car chase. Above and below the real pixels, the model invents what the vertical frame needs: the tunnel roof, the sky over the crossing, the wet street.*
 
 Paid "reframe" and "expand video" features work on **one clip at a time**: Luma Reframe and Runway
 Expand take 10–30 s, Runway's clip may not contain cuts, and they expand around the centre. Crop-only
