@@ -32,16 +32,21 @@ def _examples(folder: Path) -> list[tuple[str, str]]:
 
 
 def _reframe(video_path, api_key, ratios, captioner):
+    import gradio as gr
+    # gr.Error shows the message to the visitor; a plain exception only shows "Error" on every box
     if not video_path:
-        raise ValueError("Upload a video first.")
+        raise gr.Error("Upload a video first.")
     if not api_key or not api_key.strip():
-        raise ValueError("Paste your Comfy API key (https://platform.comfy.org). It is used for this run only.")
+        raise gr.Error("Paste your Comfy API key (https://platform.comfy.org/profile/api-keys). "
+                       "It is used for this run only.")
+    if not ratios:
+        raise gr.Error("Pick at least one ratio.")
     src = Path(video_path)
     if src.stat().st_size > MAX_MB * 1024 * 1024:
-        raise ValueError(f"Keep it under {MAX_MB} MB.")
+        raise gr.Error(f"Keep it under {MAX_MB} MB.")
     info = probe(src)
     if info["frames"] / info["fps"] > MAX_SECONDS:
-        raise ValueError(f"This demo takes edits up to {MAX_SECONDS} s; the command line has no limit.")
+        raise gr.Error(f"This demo takes edits up to {MAX_SECONDS} s; the command line has no limit.")
     work = Path(tempfile.mkdtemp(prefix="openreframe_"))
     local = work / ("input" + src.suffix.lower())
     shutil.copy(src, local)
@@ -50,7 +55,7 @@ def _reframe(video_path, api_key, ratios, captioner):
 
     def job():
         try:
-            run = Run(local, work / "out", ratios=tuple(ratios) or ("9:16",), api_key=api_key.strip(),
+            run = Run(local, work / "out", ratios=tuple(ratios), api_key=api_key.strip(),
                       logger=lines.append, captioner=captioner)
             run.run()
             result["ok"] = True
