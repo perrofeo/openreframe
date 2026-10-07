@@ -4,6 +4,9 @@
 - Try it: upload an edit and paste YOUR Comfy API key. The key lives only in memory for that run; it
   is never logged, stored or written to the run folder. The GPU time is billed to the key's owner.
   With COMFY_BASE_URL pointing at your own ComfyUI there is no key to paste: it runs on your GPU.
+- Guest code (optional, for a hosted demo): set OPENREFRAME_GUEST_CODE and OPENREFRAME_GUEST_KEY (secrets,
+  never in the repo) and whoever types the code in the key field runs on that key, within a cap:
+  OPENREFRAME_GUEST_RUNS runs (default 20) of up to OPENREFRAME_GUEST_SECONDS each (default 30).
 
     pip install "openreframe[web]"
     OPENREFRAME_EXAMPLES=./examples openreframe-web --port 7860
@@ -11,6 +14,7 @@
 from __future__ import annotations
 
 import argparse
+import hmac
 import os
 import shutil
 import tempfile
@@ -24,6 +28,11 @@ from .video import probe
 MAX_SECONDS = 60
 MAX_MB = 200
 LOCAL = os.environ.get("COMFY_BASE_URL", "")   # your own ComfyUI (through comfy-api-proxy): no key, no credits
+GUEST_CODE = os.environ.get("OPENREFRAME_GUEST_CODE", "")
+GUEST_KEY = os.environ.get("OPENREFRAME_GUEST_KEY", "")
+GUEST_RUNS = int(os.environ.get("OPENREFRAME_GUEST_RUNS", "20"))
+GUEST_SECONDS = int(os.environ.get("OPENREFRAME_GUEST_SECONDS", "30"))
+_guest = {"used": 0, "lock": threading.Lock()}   # in memory: a restart of the app resets the count
 
 
 def _examples(folder: Path) -> list[tuple[str, str]]:
@@ -68,6 +77,14 @@ def _reframe(video_path, api_key, ratios, captioner):
     ratios = [target] + [r for r in OFFERS[target] if r in ratios and r != target]
     if info["frames"] / info["fps"] > MAX_SECONDS:
         raise gr.Error(f"This demo takes edits up to {MAX_SECONDS} s; the command line has no limit.")
+    if GUEST_CODE and GUEST_KEY and hmac.compare_digest(api_key.encode(), GUEST_CODE.encode()):
+        if info["frames"] / info["fps"] > GUEST_SECONDS:
+            raise gr.Error(f"With an access code, edits up to {GUEST_SECONDS} s.")
+        with _guest["lock"]:
+            if _guest["used"] >= GUEST_RUNS:
+                raise gr.Error("This access code has no runs left.")
+            _guest["used"] += 1
+        api_key = GUEST_KEY
     work = Path(tempfile.mkdtemp(prefix="openreframe_"))
     local = work / ("input" + src.suffix.lower())
     shutil.copy(src, local)

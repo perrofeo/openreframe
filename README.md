@@ -69,6 +69,20 @@ More: `--ratios`, `--size 720x1280` (more detail, more GPU time), `--window` (lo
 model, 121 frames by default; smaller needs less VRAM, `0` renders every shot whole), `--captioner`,
 `--recaption`, `--seed`, `--steps`, `--redo split` (re-run a step and the ones after it).
 
+## Web app
+
+```bash
+pip install "openreframe[web] @ git+https://github.com/perrofeo/openreframe"
+openreframe-web                                      # http://127.0.0.1:7860
+```
+
+Upload an edit, see its shape and the ratios it will get, press Reframe. Visitors paste their own Comfy
+API key: it is used for that run only and never stored or logged. With `COMFY_BASE_URL` pointing at your
+ComfyUI there is no key at all. To host a demo that a few people can try on your account, set
+`OPENREFRAME_GUEST_CODE` and `OPENREFRAME_GUEST_KEY` as secrets: the code works in place of a key, capped
+at `OPENREFRAME_GUEST_RUNS` runs (20) of up to `OPENREFRAME_GUEST_SECONDS` (30 s). Our
+[Space](https://huggingface.co/spaces/perrofeo/openreframe) runs this app.
+
 ## On your own ComfyUI
 
 **No Comfy account, no API key, no credits.** The SDK talks to your ComfyUI through
