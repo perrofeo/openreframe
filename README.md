@@ -180,4 +180,4 @@ Thanks to the teams behind ComfyUI, Wan, lightx2v, Depth Anything, Qwen, RT-DETR
 
 ## License
 
-[Apache-2.0](LICENSE)
+The code is [Apache-2.0](LICENSE). The footage, characters and demo videos (the car chase, Tooru) are © The Rendered, all rights reserved: they are not covered by the Apache license.

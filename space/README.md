@@ -16,3 +16,5 @@ Reframe a finished edit to another aspect ratio, shot by shot, with open models 
 Code and docs: https://github.com/perrofeo/openreframe
 
 "Try it" runs on your own Comfy Cloud key; it is used for that run only and never stored.
+
+The code is Apache-2.0. The example footage and characters (the car chase, Tooru) are © The Rendered, all rights reserved: they are not covered by the Apache license.
