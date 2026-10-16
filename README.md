@@ -19,7 +19,7 @@ comes through untouched.
 TikTok; social teams turning one campaign edit into every feed format; and anyone whose phone footage
 has to sit in a 16:9 edit or a YouTube video.
 
-Built for the [Comfy Developer Platform Challenge](https://blog.comfy.org/p/open-call-comfy-dev-platform-challenge)
+Built for Comfy's [Open Source Higgsfield](https://comfy.org/open-source-higgsfield) challenge
 on the official [Comfy SDK](https://docs.comfy.org/development/api-development/sdks): the same code runs
 on Comfy Cloud or on your own ComfyUI.
 
